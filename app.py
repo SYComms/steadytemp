@@ -137,7 +137,6 @@ def default_config():
             "free_support_years": 1,
         },
         "terms": None,            # filled from TERMS_DEFAULT
-        "terms_draft": True,      # shows a DRAFT banner on the Terms page until switched off in Admin
     }
 
 TERMS_DEFAULT = [
@@ -661,11 +660,6 @@ def doc_dd(pdf, C, sign):
 
 def doc_terms(pdf, C, sign):
     doc_header(pdf, "Terms & Conditions")
-    if CFG.get("terms_draft", True):
-        pdf.set_fill_color(255, 240, 200); pdf.set_draw_color(230, 150, 30)
-        pdf.set_font("Helvetica", "B", 8.5); pdf.set_text_color(130, 80, 0)
-        pdf.cell(0, 7, "  DRAFT TERMS - NOT TO BE ISSUED UNTIL REVIEWED (switch off in Admin > Company & terms)", fill=True, border=1, ln=True)
-        pdf.set_text_color(0, 0, 0); pdf.ln(2)
     fill = dict(legal=CO["legal"], trading=CO["trading"], free=int(COST["free_support_years"]))
     for title, text in CFG["terms"]:
         pdf.set_fill_color(*NAVY); pdf.set_text_color(255, 255, 255); pdf.set_font("Helvetica", "B", 8)
@@ -1099,8 +1093,6 @@ with t_paper:
     miss = _ready()
     if miss:
         st.markdown("<div class='st-warn'>Still needed: " + esc(", ".join(miss)) + "</div>", unsafe_allow_html=True)
-    if CFG.get("terms_draft", True):
-        st.markdown("<div class='st-warn'>The Terms & Conditions are still marked <b>DRAFT</b>. An admin switches this off in Admin → Company & terms once they've been reviewed.</div>", unsafe_allow_html=True)
     if st.button("Build the pack", type="primary", key="btn_build"):
         try:
             st.session_state["_pack_bytes"] = build_pack(None)
@@ -1322,7 +1314,6 @@ if IS_ADMIN and t_admin is not None:
                 st.markdown("**Terms & Conditions** - one clause per row. `{legal}`, `{trading}` and `{free}` fill in automatically.")
                 terms_df = st.data_editor(pd.DataFrame(CFG["terms"], columns=["Clause", "Text"]), num_rows="dynamic", **FW,
                                           column_config={"Text": st.column_config.TextColumn("Text", width="large")})
-                draft = st.checkbox("Mark the Terms & Conditions page as DRAFT", value=bool(CFG.get("terms_draft", True)))
                 if st.form_submit_button("Save company & terms", type="primary"):
                     CO.update(trading=trading, legal=legal, legal_line=legal_line, addr=[x.strip() for x in addr.splitlines() if x.strip()],
                               reg=reg, vat=vat, email=email, phone=phone, web=web, funder=funder)
@@ -1330,7 +1321,6 @@ if IS_ADMIN and t_admin is not None:
                         import base64
                         CO["logo_b64"] = base64.b64encode(logo.getvalue()).decode()
                     CFG["terms"] = [[str(r["Clause"]), str(r["Text"])] for _, r in terms_df.iterrows() if str(r.get("Clause") or "").strip()]
-                    CFG["terms_draft"] = bool(draft)
                     st.success("Saved."); st.rerun()
 
         with a_bk:
