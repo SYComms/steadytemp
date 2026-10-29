@@ -113,9 +113,9 @@ def default_config():
             "addr": ["Suite C Jupiter House", "Sitka Drive", "Shrewsbury Business Park", "Shropshire", "SY2 6LG"],
             "reg": "Registered in England 15722588",
             "vat": "VAT Registration No. Pending",
-            "email": "hello@sycomms.co.uk",
-            "phone": "",
-            "web": "",
+            "email": "andy@steadytemp.co.uk",
+            "phone": "01743 832049",
+            "web": "www.steadytemp.co.uk",
             "funder": "our finance partner",
             "logo_b64": "",
         },
@@ -158,6 +158,9 @@ TERMS_DEFAULT = [
     ["15. GENERAL", "These terms and the Order are the whole agreement between us and are governed by the law of England and Wales, with the English courts having exclusive jurisdiction. We may change these terms by written notice; changes do not alter a signed Order. You may not transfer your rights without our written consent. If any clause is found unenforceable the rest remains in force."],
 ]
 
+# Contact details printed on paperwork are fixed, whoever is logged in or sells (overrides any saved config)
+FIXED_CONTACT = {"email": "andy@steadytemp.co.uk", "phone": "01743 832049", "web": "www.steadytemp.co.uk"}
+
 # ───────────────────────────── config load ─────────────────────────────
 CONFIG_FILE = "config.json"
 
@@ -181,6 +184,7 @@ if "cfg" not in st.session_state:
     st.session_state.cfg = load_config()
 CFG = st.session_state.cfg
 CO = CFG["company"]
+CO.update(FIXED_CONTACT)
 COST = CFG["costs"]
 
 # ───────────────────────────── sign-in ─────────────────────────────
@@ -707,7 +711,7 @@ def build_quote_pdf():
     if contact:
         kv(pdf, "Attention:", contact)
     if Q("q_rep"):
-        kv(pdf, "Your contact:", Q("q_rep") + (f"  |  {CO['email']}" if CO.get("email") else "") + (f"  |  {CO['phone']}" if CO.get("phone") else ""))
+        kv(pdf, "Your contact:", " | ".join(x for x in (Q("q_rep"), CO.get("email"), CO.get("phone"), CO.get("web")) if x))
     pdf.ln(1)
     para(pdf, "Thank you for the opportunity to quote. Below is the system we recommend, what it will cost, and what is included. "
               "Everything is supplied, installed and supported by one team.", size=9, h=4.8)
@@ -750,8 +754,9 @@ def build_quote_pdf():
     if pdf.get_y() > 215:
         pdf.add_page(); pdf.set_y(20)
     y = pdf.get_y()
-    pdf.set_fill_color(*PALE); pdf.rect(pdf.l_margin, y, pdf.epw, 30, "F")
-    pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, y, 2.2, 30, "F")
+    pdf.set_fill_color(*PALE); bh = 30 if C["is_cash"] else 23
+    pdf.rect(pdf.l_margin, y, pdf.epw, bh, "F")
+    pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, y, 2.2, bh, "F")
     pdf.set_xy(pdf.l_margin + 8, y + 3); pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*NAVY)
     if C["is_cash"]:
         pdf.cell(0, 5, "ONE-OFF PRICE", ln=True)
@@ -761,14 +766,14 @@ def build_quote_pdf():
     else:
         pdf.cell(0, 5, "MONTHLY RENTAL", ln=True)
         pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 24); pdf.cell(0, 12, money(C["rental"]) + " per month", ln=True)
-        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "", 9); pdf.set_text_color(70, 80, 90)
-        pdf.cell(0, 5, s(f"plus VAT - over {C['term']} months ({C['term_label']}), subject to finance approval"), ln=True)
-    pdf.set_text_color(0, 0, 0); pdf.set_y(y + 33)
-    inc = [f"Supply and installation by qualified engineers",
+    pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
+    inc = [f"Supply and installation by qualified F-Gas engineers, including all materials",
            f"{fy} year{'s' if fy != 1 else ''} on-site support and warranty included",
            f"Then on-site support at {money(C['support'])} per year plus VAT for the rest of the agreement"]
     if _num("q_cashback") > 0:
         inc.append(f"Cashback of {money(_num('q_cashback'))} towards your requirements")
+    if not C["is_cash"]:
+        inc.append(f"plus VAT - over {C['term']} months, subject to finance approval")
     pdf.set_font("Helvetica", "B", 9); pdf.cell(0, 5, "Included", ln=True)
     for t in inc:
         pdf.set_font("Helvetica", "", 8.5); pdf.set_x(pdf.l_margin + 3); pdf.cell(0, 5, s("-  " + t), ln=True)
@@ -1271,7 +1276,7 @@ if IS_ADMIN and t_admin is not None:
                 r1, r2 = st.columns(2)
                 reg = r1.text_input("Registration line", CO["reg"]); vat = r2.text_input("VAT line", CO["vat"])
                 e1, e2, e3 = st.columns(3)
-                email = e1.text_input("Email", CO["email"]); phone = e2.text_input("Phone", CO["phone"]); web = e3.text_input("Website", CO["web"])
+                email = e1.text_input("Email (fixed)", CO["email"], disabled=True); phone = e2.text_input("Phone (fixed)", CO["phone"], disabled=True); web = e3.text_input("Website (fixed)", CO["web"], disabled=True)
                 funder = st.text_input("Finance provider name used in the paperwork", CO["funder"])
                 logo = st.file_uploader("Logo (PNG/JPG, optional)", type=["png", "jpg", "jpeg"])
                 st.markdown("**Terms & Conditions** - one clause per row. `{legal}`, `{trading}` and `{free}` fill in automatically.")
