@@ -330,7 +330,7 @@ _QUOTE_PREFIXES = ("q_", "eq_")
 def quote_snapshot():
     out = {}
     for k, v in st.session_state.items():
-        if k.startswith(_QUOTE_PREFIXES) and isinstance(v, (str, int, float, bool)) and not k.startswith("q_sig"):
+        if k.startswith(_QUOTE_PREFIXES) and isinstance(v, (str, int, float, bool)) and not k.startswith(("q_sig", "q_bank")):    # bank details are never saved to the quote file:
             out[k] = v
     return out
 
@@ -635,9 +635,29 @@ def doc_dd(pdf, C, sign):
         pdf.cell(30, 9, "  " + a, fill=True, border="B"); pdf.set_font("Helvetica", "", 9)
         pdf.cell(0, 9, "  " + s(b), fill=True, border="B", ln=True)
         pdf.ln(1)
-    pdf.ln(3)
-    para(pdf, "Your payments are protected by the Direct Debit Guarantee. If anything changes, we will tell you in advance. If you need to "
-              "cancel, contact your bank or us.", size=8, style="I")
+    pdf.ln(2)
+    band(pdf, "Direct Debit mandate - your bank details")
+    sc = re.sub(r"\D", "", Q("q_bank_sort"))
+    sc = f"{sc[0:2]}-{sc[2:4]}-{sc[4:6]}" if len(sc) == 6 else Q("q_bank_sort")
+    blank = "______________________"
+    kv(pdf, "Bank / building society:", Q("q_bank_name") or blank, 52)
+    kv(pdf, "Account holder name:", Q("q_bank_holder") or Q("q_company") or blank, 52)
+    kv(pdf, "Account number:", Q("q_bank_acc") or blank, 52)
+    kv(pdf, "Sort code:", sc or blank, 52)
+    kv(pdf, "Billing email:", Q("q_bill_email") or Q("q_email") or blank, 52)
+    pdf.ln(1)
+    para(pdf, f"I/we authorise {CO['legal']} (trading as {CO['trading']}) to collect by Direct Debit, through GoCardless, the "
+              + ("annual on-site support charge and any other amounts invoiced to us under this agreement. " if C["is_cash"] else
+                 "annual on-site support charge and any other amounts invoiced to us under this agreement (the equipment rental itself is collected by the finance provider). ")
+              + "Payments are collected on or around the due date shown on our invoice, and we will tell you in advance of any change to the amount or date. "
+              "This mandate is subject to the Direct Debit Guarantee below.", size=8.3, h=4.2)
+    sig_block(pdf, "Authorised signature (the account holder)", sign)
+    pdf.ln(2)
+    para(pdf, "THE DIRECT DEBIT GUARANTEE - The Guarantee is offered by all banks and building societies that accept instructions to pay Direct Debits. "
+              "If there are any changes to the amount, date or frequency of your Direct Debit, the organisation will notify you (normally 10 working days) in advance "
+              "of your account being debited or as otherwise agreed. If an error is made in the payment of your Direct Debit, you are entitled to a full and immediate "
+              "refund of the amount paid from your bank or building society. You can cancel a Direct Debit at any time by simply contacting your bank or building society. "
+              "Written confirmation may be required; please also notify us.", size=7, h=3.6, style="I")
 
 def doc_terms(pdf, C, sign):
     doc_header(pdf, "Terms & Conditions")
@@ -869,6 +889,16 @@ with t_cust:
         st.text_input("Billing email", key="q_bill_email")
         st.number_input("Number of existing air con units", min_value=0, step=1, key="q_existing_units")
         st.text_area("Notes to engineer & office", key="q_notes", height=90)
+    st.markdown("##### Direct Debit - customer's bank details")
+    st.caption("Printed on the Direct Debit mandate in the paperwork pack. Leave blank to have the customer write them in. Not saved in the quote file.")
+    b1, b2, b3, b4 = st.columns(4)
+    b1.text_input("Bank / building society", key="q_bank_name")
+    b2.text_input("Account holder name", key="q_bank_holder", placeholder="Defaults to the company name")
+    b3.text_input("Account number", key="q_bank_acc", max_chars=8, placeholder="8 digits")
+    b4.text_input("Sort code", key="q_bank_sort", max_chars=8, placeholder="00-00-00")
+    _acc = re.sub(r"\D", "", Q("q_bank_acc")); _sort = re.sub(r"\D", "", Q("q_bank_sort"))
+    if (Q("q_bank_acc") and len(_acc) != 8) or (Q("q_bank_sort") and len(_sort) != 6):
+        st.warning("Check the bank details: an account number is 8 digits and a sort code is 6 digits.")
     st.text_input("Prepared by", key="q_rep", help="Shown on the paperwork. Filled from your login.")
 
 # ───────────────────────────── equipment ─────────────────────────────
@@ -1121,10 +1151,17 @@ with t_sign:
     elif not CANVAS_OK:
         st.warning("The drawing pad isn't available - please upload a photo of the signature instead.")
     else:
-        res = st_canvas(fill_color="rgba(0,0,0,0)", stroke_width=3, stroke_color="#000000", background_color="#EAF4FB",
-                        update_streamlit=True, height=170, width=500, drawing_mode="freedraw", key="sig_canvas")
+        _cv = dict(fill_color="rgba(0,0,0,0)", stroke_width=3, stroke_color="#000000", background_color="#EAF4FB",
+                   update_streamlit=True, height=170, width=500, drawing_mode="freedraw", key="sig_canvas")
+        try:
+            res = st_canvas(return_image_data=True, **_cv)      # newer versions of the drawing pad need this
+        except TypeError:
+            res = st_canvas(**_cv)                               # older versions don't have the option
         if st.button("✅ Save signature", key="btn_save_sig"):
-            data = getattr(res, "image_data", None)
+            try:
+                data = getattr(res, "image_data", None)
+            except Exception:                                    # pad hasn't sent a drawing yet
+                data = None
             if data is None:
                 st.error("Please draw a signature first.")
             else:
