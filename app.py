@@ -648,8 +648,8 @@ def _login_screen():
     _l, _m, _r = st.columns([1, 1.2, 1])
     with _m:
         st.markdown(f"<div style='text-align:center;margin:2.5rem 0 1rem'><div style='font-size:2.4rem'>❄️</div>"
-                    f"<div style='font-size:1.7rem;font-weight:800;color:#0B3C5D'>{esc(CO['trading'])}</div>"
-                    f"<div style='color:#5B7A91'>Quotes &amp; paperwork</div></div>", unsafe_allow_html=True)
+                    f"<div style='font-size:1.7rem;font-weight:800;color:#FF8A2A'>{esc(CO['trading'])}</div>"
+                    f"<div style='color:#7FC8EE'>Quotes &amp; paperwork</div></div>", unsafe_allow_html=True)
         with st.container(border=True):
             if USERS:
                 em = st.text_input("Email", key="lg_email", placeholder="you@yourcompany.co.uk")
@@ -798,7 +798,7 @@ def _load_quote_cb():
         st.session_state["_quote_loaded"] = "ERR"
 
 # ───────────────────────────── paperwork (PDF) ─────────────────────────────
-NAVY, ACCENT, PALE = (11, 60, 93), (0, 160, 200), (234, 244, 250)
+NAVY, ACCENT, PALE = (16, 41, 74), (255, 138, 42), (232, 243, 251)
 
 def Q(key, default=""):
     v = st.session_state.get(key, default)
@@ -1136,14 +1136,15 @@ def build_pack(sign=None):
 # ───────────────────────────── look & feel ─────────────────────────────
 st.markdown("""
 <style>
-.block-container{padding-top:1.4rem;max-width:1250px}
-.st-hero{background:linear-gradient(120deg,#0B3C5D 0%,#0E6E9C 100%);color:#fff;border-radius:16px;padding:1.1rem 1.4rem;margin-bottom:1rem}
-.st-hero .t{font-size:1.5rem;font-weight:800;letter-spacing:.3px}.st-hero .s{opacity:.85;font-size:.9rem}
-.st-card{border:1px solid #D5E3EE;border-radius:14px;padding:1rem 1.2rem;background:#fff}
-.st-card .l{font-size:.72rem;font-weight:700;text-transform:uppercase;color:#5B7A91}
-.st-card .v{font-size:1.9rem;font-weight:800;color:#0B3C5D}.st-card .x{font-size:.82rem;color:#5B7A91}
-.st-warn{border-left:4px solid #E69B1E;background:#FFF6E3;border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#6B4400}
-.st-bad{border-left:4px solid #D64545;background:#FDECEC;border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#7A1F1F}
+.block-container{padding-top:3.4rem;max-width:1250px}
+.st-hero{background:linear-gradient(120deg,#10294A 0%,#0F5C8C 100%);color:#fff;border-radius:16px;padding:1.1rem 1.4rem;margin-bottom:1rem;border-bottom:3px solid #FF8A2A}
+.st-hero .t{font-size:1.5rem;font-weight:800;letter-spacing:.3px}.st-hero .s{color:#BFE6FA;font-size:.9rem}
+.st-card{border:1px solid #223652;border-left:4px solid #FF8A2A;border-radius:14px;padding:1rem 1.2rem;background:#121D30}
+.st-card .l{font-size:.72rem;font-weight:700;text-transform:uppercase;color:#7FC8EE;letter-spacing:.4px}
+.st-card .v{font-size:1.9rem;font-weight:800;color:#FFFFFF}.st-card .x{font-size:.82rem;color:#8FA9BF}
+.st-warn{border-left:4px solid #FF8A2A;background:rgba(255,138,42,.12);border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#FFD9B3}
+.st-bad{border-left:4px solid #F25C5C;background:rgba(242,92,92,.14);border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#FFC9C9}
+h4,h5{color:#7FC8EE !important}
 </style>""", unsafe_allow_html=True)
 
 def card(label, value, sub="", target=None):
