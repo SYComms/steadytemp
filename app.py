@@ -762,7 +762,8 @@ def calc():
     rate, true_rate = float(rr["rate"]), float(rr["true_rate"])
     calc_rental = subtotal * rate / 1000.0
     desired = _num("q_desired_rental")
-    rental = round(desired if desired > 0 else calc_rental, 2)
+    cp_rental, cp_cash, cp_support = _num("q_cp_rental"), _num("q_cp_cash"), _num("q_cp_support")   # admin "customer pays" prices
+    rental = round(cp_rental if cp_rental > 0 else (desired if desired > 0 else calc_rental), 2)
     funded = rental / true_rate * 1000.0 if true_rate > 0 else 0.0
     gp = funded - set_up
     units = gp / C["unit_size"] if C["unit_size"] else 0.0
@@ -770,7 +771,7 @@ def calc():
     # cash sale
     cash_list = subtotal * C["cash_load"]
     vol_disc = _num("q_vol_discount")
-    cash_price = round(cash_list - vol_disc, 2)
+    cash_price = round(cp_cash if cp_cash > 0 else cash_list - vol_disc, 2)
     cash_gp = cash_price - set_up
     cash_units = cash_gp / C["unit_size"] if C["unit_size"] else 0.0
     cash_comm = cash_units * C["unit_value"]
@@ -778,6 +779,8 @@ def calc():
     return dict(
         qty=qty, counts=counts, n_units=sum(counts.values()), n_all=sum(q for _, q in qty),
         equip_cost=equip_cost, equip_srrp=equip_srrp, maint_annual=maint_annual, extras=extras, install=install,
+        support=(cp_support if cp_support > 0 else maint_annual), cp_rental_on=cp_rental > 0, cp_cash_on=cp_cash > 0,
+        cp_support_on=cp_support > 0, cash_calc=round(cash_list - vol_disc, 2),
         other=other, additional=additional, set_up=set_up, subtotal=subtotal, term=term, term_label=rr["label"],
         profile=f"1+{term - 1}", rate=rate, true_rate=true_rate, calc_rental=round(calc_rental, 2), rental=rental,
         desired_on=desired > 0 and abs(desired - calc_rental) > 0.005, funded=funded, gp=gp, units=units,
@@ -1021,7 +1024,7 @@ def doc_proposal(pdf, C, sign):
         pdf.cell(120, 5.2, "  Equipment rental charge per month (plus VAT)", ln=False); pdf.cell(0, 5.2, money(C["rental"]), ln=True, align="R")
     fy = int(COST["free_support_years"])
     pdf.cell(120, 5.2, s(f"  On-site support - first {fy} year{'s' if fy != 1 else ''}"), ln=False); pdf.cell(0, 5.2, "Included", ln=True, align="R")
-    pdf.cell(120, 5.2, s(f"  On-site support after year {fy} (annual charge, plus VAT)"), ln=False); pdf.cell(0, 5.2, money(C["maint_annual"]), ln=True, align="R")
+    pdf.cell(120, 5.2, s(f"  On-site support after year {fy} (annual charge, plus VAT)"), ln=False); pdf.cell(0, 5.2, money(C["support"]), ln=True, align="R")
     if not C["is_cash"] and ex_total > 0:
         diff = ex_total - C["rental"]
         pdf.set_font("Helvetica", "B", 8.5)
@@ -1077,7 +1080,7 @@ def doc_support(pdf, C, sign):
               "Additional equipment added later will be charged for, and its warranty premium added to this agreement.")
     pdf.ln(1)
     kv(pdf, "Inclusive period:", f"{fy} year{'s' if fy != 1 else ''} from installation", 42)
-    kv(pdf, "Annual charge after:", f"{money(C['maint_annual'])} plus VAT per year, for the remainder of the term", 42)
+    kv(pdf, "Annual charge after:", f"{money(C['support'])} plus VAT per year, for the remainder of the term", 42)
     pdf.ln(1)
     para(pdf, f"{CO['trading']} agrees to provide remote and on-site maintenance cover for the equipment above, and the customer agrees to pay "
               "the annual charge set out above for the agreement term, subject to the terms and conditions. As a duly authorised representative "
@@ -1183,7 +1186,7 @@ with st.sidebar:
     else:
         st.metric(f"Monthly rental · {CALC['term_label']}", "-" if _none else money(CALC["rental"]))
         st.caption("plus VAT · billed by the funder")
-    st.metric("Annual support (after year 1)", "-" if _none else money(CALC["maint_annual"]))
+    st.metric("Annual support (after year 1)", "-" if _none else money(CALC["support"]))
     st.divider()
     if st.button("Sign out", **FW):
         for k in list(st.session_state.keys()):
@@ -1333,7 +1336,7 @@ with t_quote:
         card("Cash price", "-" if _none else money(CALC["cash_price"]), "plus VAT", m1)
     else:
         card("Monthly rental", "-" if _none else money(CALC["rental"]), f"{CALC['term_label']} · plus VAT", m1)
-    card("Annual support", "-" if _none else money(CALC["maint_annual"]), "after the included period", m2)
+    card("Annual support", "-" if _none else money(CALC["support"]), "after the included period", m2)
     card("Systems", str(CALC["n_units"]), "units in this quote", m3)
 
 # ───────────────────────────── consultant ─────────────────────────────
@@ -1354,7 +1357,9 @@ with t_cons:
         comm_units, comm_val, gp = C["units"], C["commission"], C["gp"]
     a, b, c, d = st.columns(4)
     card("Calculated rental", money(C["calc_rental"]), "price book" if not C["is_cash"] else "n/a (cash)", a)
-    card("Rental used", money(C["rental"]) if not C["is_cash"] else money(C["cash_price"]), "your target" if C["desired_on"] else "calculated", b)
+    _cp_on = C["cp_cash_on"] if C["is_cash"] else C["cp_rental_on"]
+    card("Rental used", money(C["rental"]) if not C["is_cash"] else money(C["cash_price"]),
+         "set by admin" if _cp_on else ("your target" if C["desired_on"] else "calculated"), b)
     card("Commission units", f"{comm_units:.2f}", f"£{COST['unit_size']:,.0f} profit = 1 unit", c)
     card("Commission", money(comm_val, 0), "estimated", d)
     if gp < 0:
@@ -1489,7 +1494,46 @@ if IS_ADMIN and t_admin is not None:
         st.markdown("<div class='st-warn'>Changes here apply straight away but last only until the app restarts. "
                     "Use <b>Backup</b> to download <code>config.json</code> and upload it to GitHub to make them permanent.</div>",
                     unsafe_allow_html=True)
-        a_cat, a_rates, a_costs, a_co, a_bk = st.tabs(["Catalogue", "Lease rates", "Costs & fees", "Company & terms", "Backup"])
+        a_cp, a_cat, a_rates, a_costs, a_co, a_bk = st.tabs(["Customer prices", "Catalogue", "Lease rates", "Costs & fees", "Company & terms", "Backup"])
+
+        def _reset_cp():
+            for _k in ("q_cp_rental", "q_cp_cash", "q_cp_support"):
+                st.session_state[_k] = 0.0
+
+        with a_cp:
+            Cc = CALC
+            st.markdown("##### Customer pays - this deal")
+            st.caption("Set what the customer actually pays, without touching individual costs or sell prices. Leave a box at 0 to use the calculated price. "
+                       "These prices go straight onto the paperwork and into the profit figures below, and are saved with the quote.")
+            h1, h2, h3 = st.columns([2.2, 1.4, 1.6])
+            h1.markdown("**Item**"); h2.markdown("**Calculated**"); h3.markdown("**Customer pays**")
+            r1, r2, r3 = st.columns([2.2, 1.4, 1.6])
+            r1.markdown(f"Monthly rental · {Cc['term_label']} (plus VAT)"); r2.markdown(money(Cc["calc_rental"]))
+            r3.number_input("Monthly rental", min_value=0.0, step=1.0, key="q_cp_rental", label_visibility="collapsed")
+            r1, r2, r3 = st.columns([2.2, 1.4, 1.6])
+            r1.markdown("Cash price (plus VAT)"); r2.markdown(money(Cc["cash_calc"]))
+            r3.number_input("Cash price", min_value=0.0, step=10.0, key="q_cp_cash", label_visibility="collapsed")
+            r1, r2, r3 = st.columns([2.2, 1.4, 1.6])
+            r1.markdown("Annual support after the included period (plus VAT)"); r2.markdown(money(Cc["maint_annual"]))
+            r3.number_input("Annual support", min_value=0.0, step=10.0, key="q_cp_support", label_visibility="collapsed")
+            st.button("↩️ Reset to calculated prices", on_click=_reset_cp, key="btn_reset_cp")
+            st.divider()
+            y1, y2, y3 = st.columns(3)
+            if Cc["is_cash"]:
+                card("Customer pays", money(Cc["cash_price"]), "cash, plus VAT" + (" · admin price" if Cc["cp_cash_on"] else ""), y1)
+                card("Gross profit", money(Cc["cash_gp"], 0), f"{Cc['cash_units']:.2f} commission units", y2)
+                card("Commission", money(Cc["cash_comm"], 0), "estimated", y3)
+                _loss = Cc["cash_gp"] < 0
+            else:
+                card("Customer pays", f"{money(Cc['rental'])}/mo", f"{Cc['term_label']} · total {money(Cc['rental'] * Cc['term'], 0)}"
+                     + (" · admin price" if Cc["cp_rental_on"] else ""), y1)
+                card("Gross profit", money(Cc["gp"], 0), f"funder pays {money(Cc['funded'], 0)} · {Cc['units']:.2f} units", y2)
+                card("Commission", money(Cc["commission"], 0), f"company profit after commission {money(Cc['co_profit'], 0)}", y3)
+                _loss = Cc["gp"] < 0
+            if _loss:
+                st.markdown("<div class='st-bad'>⛔ At this price the deal makes a loss.</div>", unsafe_allow_html=True)
+            if Cc["cp_rental_on"] and not Cc["is_cash"]:
+                st.caption("The monthly rental stays at the admin price if you change the lease term - re-check it after changing the term.")
 
         with a_cat:
             st.caption("Edit prices, add or remove lines. 'Sell' is RRP × the SRRP multiplier (Costs & fees). Tick 'Price TBC' to warn consultants.")
