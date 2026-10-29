@@ -804,6 +804,8 @@ def _load_quote_cb():
         return
     try:
         data = json.loads(f.getvalue().decode("utf-8"))
+        for k in [k for k in st.session_state.keys() if k.startswith(("w_", "sel_"))]:
+            del st.session_state[k]                       # card widgets pick up the loaded quantities
         for k, v in data.items():
             if k.startswith(_QUOTE_PREFIXES):
                 st.session_state[k] = v
@@ -1221,18 +1223,76 @@ with t_cust:
     st.text_input("Prepared by", key="q_rep", help="Shown on the paperwork. Filled from your login.")
 
 # ───────────────────────────── equipment ─────────────────────────────
+def _qty_cb(name):
+    st.session_state["eq_" + name] = int(st.session_state.get("w_" + name, 0) or 0)
+
+def _img_html(img):
+    if not img:
+        return ("<div style='height:150px;display:flex;align-items:center;justify-content:center;background:#16233A;border:1px dashed #2C4466;"
+                "border-radius:10px;margin-bottom:.5rem;color:#6F8CA8;font-size:.8rem'>Photo to follow</div>")
+    return (f"<div style='height:150px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:10px;margin-bottom:.5rem'>"
+            f"<img src='data:image/jpeg;base64,{img}' style='max-height:140px;max-width:92%;object-fit:contain'></div>")
+
+def _variant_label(it, brand):
+    n = it["name"]
+    for pre in (brand + " " + it["group"] + " ", brand + " "):
+        if n.startswith(pre):
+            n = n[len(pre):]; break
+    for suf in (" " + it["group"],):
+        if n.endswith(suf):
+            n = n[:-len(suf)]
+    return n
+
+SYSTEM_GROUPS = ["Wall Mounted", "Ceiling Cassette", "Ducted", "Lossnay Air Exchange"]
+
+def system_cards():
+    """One card per brand + type, with a drop-down for the model/size."""
+    cards = {}
+    for it in CFG["catalogue"]:
+        if it["group"] in SYSTEM_GROUPS:
+            brand = it["name"].split(" ")[0]
+            cards.setdefault((brand, it["group"]), []).append(it)
+    order = sorted(cards, key=lambda k: (0 if k[0] == "Midea" else 1 if k[0] == "Lossnay" else 2, SYSTEM_GROUPS.index(k[1])))
+    return [(k, cards[k]) for k in order]
+
 with t_eq:
     st.markdown("#### Equipment")
-    st.caption("Enter how many of each. Only the systems and extras appear on the customer paperwork - materials and labour are costed in the background.")
+    st.caption("Pick a model from the drop-down on each card, then enter how many. Everything you choose is listed under the card. "
+               "Only systems and extras appear on the customer paperwork - materials and labour are costed in the background.")
+    cards = system_cards()
+    for r0 in range(0, len(cards), 3):
+        cols = st.columns(3)
+        for col, ((brand, grp), items) in zip(cols, cards[r0:r0 + 3]):
+            with col.container(border=True):
+                first = items[0]
+                title = f"{brand} {grp}" if brand != "Lossnay" else "Lossnay Air Exchange"
+                st.markdown(_img_html(image_for(first)), unsafe_allow_html=True)
+                st.markdown(f"**{title}**")
+                labels = {it["name"]: _variant_label(it, brand) + (" ⚠️" if it.get("tbc") else "") for it in items}
+                names = list(labels)
+                _sk = f"sel_{brand}_{grp}"
+                if _sk not in st.session_state:             # open on a model that is already in the quote (e.g. after loading one)
+                    st.session_state[_sk] = next((i["name"] for i in items if int(_num(cat_key(i))) > 0), names[0])
+                pick = st.selectbox("Model", names, format_func=lambda n, _l=labels: _l[n], key=f"sel_{brand}_{grp}",
+                                    label_visibility="collapsed")
+                it = next(i for i in items if i["name"] == pick)
+                st.caption(f"{it.get('desc') or grp}  ·  RRP {money(it['rrp'])}" + ("  ·  price to be confirmed" if it.get("tbc") else ""))
+                st.number_input("Qty", min_value=0, step=1, value=int(_num(cat_key(it))), key="w_" + it["name"],
+                                on_change=_qty_cb, args=(it["name"],), label_visibility="collapsed")
+                chosen = [(i, int(_num(cat_key(i)))) for i in items if int(_num(cat_key(i))) > 0]
+                if chosen:
+                    st.markdown("<div style='font-size:.8rem;color:#FFB26B;margin-top:.2rem'>Selected</div>", unsafe_allow_html=True)
+                    for i, q in chosen:
+                        st.markdown(f"<div style='font-size:.84rem'>{q} × {esc(_variant_label(i, brand))}</div>", unsafe_allow_html=True)
+    st.markdown("&nbsp;")
     by_group = {}
     for it in CFG["catalogue"]:
-        by_group.setdefault(it["group"], []).append(it)
-    for g in GROUP_ORDER + [x for x in by_group if x not in GROUP_ORDER]:
-        items = by_group.get(g)
-        if not items:
-            continue
+        if it["group"] not in SYSTEM_GROUPS:
+            by_group.setdefault(it["group"], []).append(it)
+    for g in [x for x in GROUP_ORDER if x in by_group] + [x for x in by_group if x not in GROUP_ORDER]:
+        items = by_group[g]
         picked = sum(int(_num(cat_key(i))) for i in items)
-        with st.expander(f"{g}  ·  {picked} selected" if picked else g, expanded=bool(picked) or g == "Wall Mounted"):
+        with st.expander(f"{g}  ·  {picked} selected" if picked else g, expanded=False):
             ncol = 3
             for r0 in range(0, len(items), ncol):
                 cols = st.columns(ncol)
@@ -1240,12 +1300,10 @@ with t_eq:
                     with col.container(border=True):
                         img = image_for(it)
                         if img:
-                            st.markdown(f"<div style='height:150px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:10px;margin-bottom:.5rem'>"
-                                        f"<img src='data:image/jpeg;base64,{img}' style='max-height:140px;max-width:92%;object-fit:contain'></div>", unsafe_allow_html=True)
-                        st.markdown(f"**{it['name']}**" + ("  ⚠️" if it.get("tbc") else ""))
+                            st.markdown(_img_html(img), unsafe_allow_html=True)
+                        st.markdown(f"**{it['name']}**")
                         sub = it.get("desc") or ""
-                        st.caption((sub + "  ·  " if sub and sub != it["group"] else "") + f"RRP {money(it['rrp'])}"
-                                   + ("  ·  price to be confirmed" if it.get("tbc") else ""))
+                        st.caption((sub + "  ·  " if sub and sub != it["group"] else "") + f"RRP {money(it['rrp'])}")
                         st.number_input("Qty", min_value=0, step=1, key=cat_key(it), label_visibility="collapsed")
     if CALC["tbc"]:
         st.markdown("<div class='st-warn'>⚠️ <b>Price to be confirmed:</b> " + esc(", ".join(CALC["tbc"])) +
