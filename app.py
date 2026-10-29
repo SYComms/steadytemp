@@ -941,7 +941,10 @@ with t_eq:
     for g in [x for x in GROUP_ORDER if x in by_group] + [x for x in by_group if x not in GROUP_ORDER]:
         items = by_group[g]
         picked = sum(int(_num(cat_key(i))) for i in items)
-        with st.expander(f"{g}  ·  {picked} selected" if picked else g, expanded=False):
+        # fixed label: a label that changes would make Streamlit treat it as a new expander and snap it shut
+        with st.expander(g, expanded=False):
+            if picked:
+                st.markdown(f"<div style='font-size:.85rem;color:#FFB26B'>✔ {picked} selected in {esc(g)}</div>", unsafe_allow_html=True)
             ncol = 3
             for r0 in range(0, len(items), ncol):
                 cols = st.columns(ncol)
