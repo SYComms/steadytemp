@@ -165,6 +165,7 @@ def default_config():
             "cash_load": 1.0,
             "unit_size": 4000.0, "unit_value": 1000.0,
             "free_support_years": 1,
+            "install_day_rate": 500.0, "travel_hours": 2.0,
         },
         "terms": None,            # filled from TERMS_DEFAULT
     }
@@ -309,6 +310,56 @@ def rate_row(months):
             return r
     return CFG["lease_rates"][-1]
 
+# ───────────────────────────── journey from the office (for extra install days) ─────────────────────────────
+def _norm_pc(pc):
+    return re.sub(r"\s+", "", (pc or "").upper())
+
+def office_postcode():
+    for line in reversed(CO.get("addr") or []):
+        m = re.search(r"[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}", line.upper())
+        if m:
+            return m.group(0)
+    return "SY2 6LG"
+
+def _get_json(url):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "SteadyTemp-quotes/1.0"})
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24 * 7)
+def _journey(office_pc, site_pc):
+    """Driving time and distance between two UK postcodes (free postcode + routing services). Raises if it can't be worked out, so failures are never cached."""
+    import math
+    pts = []
+    for pc in (office_pc, site_pc):
+        d = _get_json("https://api.postcodes.io/postcodes/" + _norm_pc(pc))
+        pts.append((float(d["result"]["latitude"]), float(d["result"]["longitude"])))
+    (la1, lo1), (la2, lo2) = pts
+    try:
+        r = _get_json(f"https://router.project-osrm.org/route/v1/driving/{lo1},{la1};{lo2},{la2}?overview=false")
+        rt = r["routes"][0]
+        return {"hours": rt["duration"] / 3600.0, "miles": rt["distance"] / 1609.34, "how": "driving route"}
+    except Exception:
+        p = math.pi / 180
+        a = math.sin((la2 - la1) * p / 2) ** 2 + math.cos(la1 * p) * math.cos(la2 * p) * math.sin((lo2 - lo1) * p / 2) ** 2
+        miles = 3958.8 * 2 * math.asin(math.sqrt(a)) * 1.3          # straight line x1.3 for roads
+        return {"hours": miles / 40.0, "miles": miles, "how": "estimate from distance"}
+
+def journey_for(site_pc):
+    """None if there is no usable postcode or the lookup failed (not retried for a minute)."""
+    if not re.search(r"\d[A-Za-z]{2}\s*$", (site_pc or "").strip()):
+        return None
+    import time as _t
+    key = "_jfail_" + _norm_pc(site_pc)
+    if _t.time() < st.session_state.get(key, 0):
+        return None
+    try:
+        return _journey(office_postcode(), site_pc.strip())
+    except Exception:
+        st.session_state[key] = _t.time() + 60
+        return None
+
 def calc():
     """The SteadyTemp price book, exactly as the Excel P&L sheet works (see the Air Con P & L Calcs sheet)."""
     C = COST
@@ -332,7 +383,18 @@ def calc():
                + counts["ducted"] * C["lab_ducted"] + counts["lossnay"] * C["lab_lossnay"])
     other = _num("q_cashback") + _num("q_other_costs")
     additional = C["telemarketing"] + C["sales_override"] + C["min_commission"]
-    set_up = maint_annual + extras + install + equip_cost + other + additional       # "Set Up Costs & Equipment"
+    n_units = sum(counts.values())
+    mode = st.session_state.get("q_days_mode", "Automatic (from the customer's address)")
+    journey = journey_for(st.session_state.get("q_postcode", "")) if (mode.startswith("Automatic") and n_units > 0) else None
+    far = bool(journey and journey["hours"] > float(C["travel_hours"]))
+    if mode.startswith("Add"):
+        extra_days = int(_num("q_days_manual"))
+    elif mode.startswith("Automatic") and far:
+        extra_days = n_units                                  # a day per unit, the first covering the travel
+    else:
+        extra_days = 0
+    extra_days_cost = extra_days * C["install_day_rate"]
+    set_up = maint_annual + extras + install + extra_days_cost + equip_cost + other + additional       # "Set Up Costs & Equipment"
     subtotal = set_up + equip_srrp                                                    # "Sub Total for lease calcs"
     term = int(st.session_state.get("q_term", 84))
     rr = rate_row(term)
@@ -356,6 +418,7 @@ def calc():
     return dict(
         qty=qty, counts=counts, n_units=sum(counts.values()), n_all=sum(q for _, q in qty),
         equip_cost=equip_cost, equip_srrp=equip_srrp, maint_annual=maint_annual, extras=extras, install=install,
+        extra_days=extra_days, extra_days_cost=extra_days_cost, journey=journey, far=far, days_mode=mode,
         support=(cp_support if cp_support > 0 else maint_annual), cp_rental_on=cp_rental > 0, cp_cash_on=cp_cash > 0,
         cp_support_on=cp_support > 0, cash_calc=round(cash_list - vol_disc, 2),
         other=other, additional=additional, set_up=set_up, subtotal=subtotal, term=term, term_label=rr["label"],
@@ -843,6 +906,7 @@ def build_quote_pdf():
         pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 24); pdf.cell(0, 12, money(C["rental"]) + " per month", ln=True)
     pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
     inc = [f"Supply and installation by qualified F-Gas engineers, including all materials",
+           *([f"Estimated {C['extra_days']} day{'s' if C['extra_days'] != 1 else ''} install"] if C["extra_days"] > 0 else []),
            f"{fy} year{'s' if fy != 1 else ''} on-site support and warranty included",
            f"Then on-site support at {money(C['support'])} per year plus VAT for the rest of the agreement"]
     if _num("q_cashback") > 0:
@@ -1088,6 +1152,24 @@ with t_quote:
                      format_func=lambda m: dict(terms).get(m, str(m)), disabled=CALC["is_cash"])
         st.radio("Cherry picker / access equipment needed?", ["No", "Yes"], key="q_cherry", horizontal=True)
         st.number_input("Condensate pumps (install charge)", min_value=0, step=1, key="q_pumps")
+        st.radio("Extra install days (engineer time)", ["Automatic (from the customer's address)", "No extra days", "Add days manually"], key="q_days_mode")
+        if st.session_state.get("q_days_mode", "").startswith("Add"):
+            st.number_input("Extra install days", min_value=0, step=1, key="q_days_manual",
+                            help=f"Each day is charged at {money(COST['install_day_rate'])}.")
+        elif st.session_state.get("q_days_mode", "").startswith("Automatic"):
+            _j = CALC["journey"]
+            if not Q("q_postcode"):
+                st.caption("Enter the customer's postcode on the Customer tab and the journey from our Shrewsbury office is worked out automatically.")
+            elif _j is None:
+                st.warning("Couldn't work out the journey for that postcode (check it, or choose 'Add days manually').")
+            else:
+                _hm = f"{int(_j['hours'])}h {int(round((_j['hours'] % 1) * 60)):02d}m"
+                if CALC["far"]:
+                    st.info(f"🚐 {_hm} ({_j['miles']:.0f} miles) from our office - more than {COST['travel_hours']:g} hours, so "
+                            f"{CALC['extra_days']} extra install day{'s' if CALC['extra_days'] != 1 else ''} added "
+                            f"({money(CALC['extra_days_cost'])}). Estimated {CALC['extra_days']} day{'s' if CALC['extra_days'] != 1 else ''} install.")
+                else:
+                    st.caption(f"🚐 {_hm} ({_j['miles']:.0f} miles) from our office - within {COST['travel_hours']:g} hours, so no extra days.")
         st.text_area("Special conditions (printed on the order form)", key="q_special", height=100)
     with q2:
         st.markdown("**Customer's existing monthly costs** (optional - shown as a comparison on the proposal)")
@@ -1156,7 +1238,7 @@ with t_cons:
         st.markdown("##### Admin - full profit & loss")
         rows = [("Equipment cost", C["equip_cost"]), ("Equipment SRRP (selling price of equipment)", C["equip_srrp"]),
                 ("Maintenance (annual)", C["maint_annual"]), ("Extras (cherry picker, pumps)", C["extras"]),
-                ("Installation (labour + electrician)", C["install"]), ("Cashback + other costs", C["other"]),
+                ("Installation (labour + electrician)", C["install"]), ("Extra install days", C["extra_days_cost"]), ("Cashback + other costs", C["other"]),
                 ("Telemarketing, override, min. commission", C["additional"]),
                 ("Set-up costs & equipment", C["set_up"]), ("Sub total for lease calcs", C["subtotal"]),
                 ("Customer rate / funder rate (per £1,000)", f"{C['rate']:.2f} / {C['true_rate']:.2f}"),
@@ -1381,11 +1463,12 @@ if IS_ADMIN and t_admin is not None:
                       "lab_lossnay": "Install labour - Lossnay unit £ (0 in the price book - please confirm)", "electrician": "Electrician per system £",
                       "cherry_picker": "Cherry picker £", "pump": "Pump £ each", "telemarketing": "Telemarketing £", "sales_override": "Sales override £",
                       "min_commission": "Minimum sales commission £", "cash_load": "Cash price load (1.00 = list)", "unit_size": "Profit per commission unit £",
-                      "unit_value": "Commission per unit £", "free_support_years": "Included support (years)"}
+                      "unit_value": "Commission per unit £", "free_support_years": "Included support (years)",
+                      "install_day_rate": "Engineer install day rate £", "travel_hours": "Journey time (hours) before extra days are added"}
             with st.form("adm_costs_form"):
                 cols = st.columns(3); vals = {}
                 for n, (k, lbl) in enumerate(labels.items()):
-                    vals[k] = cols[n % 3].number_input(lbl, value=float(COST[k]), step=1.0 if k != "cash_load" and k != "srrp_mult" else 0.05, key=f"adm_c_{k}")
+                    vals[k] = cols[n % 3].number_input(lbl, value=float(COST[k]), step=1.0 if k not in ("cash_load", "srrp_mult", "travel_hours") else 0.05 if k != "travel_hours" else 0.25, key=f"adm_c_{k}")
                 if st.form_submit_button("Save costs & fees", type="primary"):
                     for k, v in vals.items():
                         COST[k] = int(v) if k == "free_support_years" else float(v)
