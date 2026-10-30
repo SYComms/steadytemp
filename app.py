@@ -742,6 +742,15 @@ def build_pack(sign=None):
     return bytes(pdf.output())
 
 
+from PIL import Image as _PIm
+
+def _png_bytes(b64):
+    """Any picture (jpg / png / webp, with or without transparency) -> plain PNG on white, safe for the PDF."""
+    import base64
+    im = _PIm.open(io.BytesIO(base64.b64decode(b64)))
+    im = im.convert("RGBA"); bg = _PIm.new("RGBA", im.size, (255, 255, 255, 255)); bg.alpha_composite(im)
+    out = io.BytesIO(); bg.convert("RGB").save(out, format="PNG"); return out.getvalue()
+
 def quote_ref():
     import zlib
     base = (Q("q_company") or "quote").upper()
@@ -783,11 +792,18 @@ def build_quote_pdf():
         img = image_for(it)
         if img:
             try:
-                from PIL import Image as _PI
-                _raw = base64.b64decode(img); _w, _h = _PI.open(io.BytesIO(_raw)).size
+                _raw = _png_bytes(img); _w, _h = _PIm.open(io.BytesIO(_raw)).size
                 _bw, _bh = 30.0, 14.0
                 _sc = min(_bw / _w, _bh / _h)
                 pdf.image(io.BytesIO(_raw), x=pdf.l_margin + 1 + (_bw - _w * _sc) / 2, y=y + 1 + (_bh - _h * _sc) / 2, w=_w * _sc, h=_h * _sc)
+            except Exception:
+                pass
+        _lg = logo_for(it["name"].split(" ")[0]) if it["kind"] in ("wall", "ceiling", "ducted") else ""
+        if _lg:
+            try:
+                _lraw = _png_bytes(_lg); _lw, _lh = _PIm.open(io.BytesIO(_lraw)).size
+                _lsc = min(26.0 / _lw, 8.0 / _lh)
+                pdf.image(io.BytesIO(_lraw), x=pdf.l_margin + 118, y=y + 4.5, w=_lw * _lsc, h=_lh * _lsc)
             except Exception:
                 pass
         pdf.set_xy(pdf.l_margin + 34, y + 2)
