@@ -102,16 +102,20 @@ BRAND_STYLE = {"Midea": "#00A0E9", "Mitsubishi": "#E60012", "Panasonic": "#0041C
 _IMG_DIR = Path(__file__).parent / "product_images"
 
 @st.cache_data(show_spinner=False)
-def _file_image(stem):
-    """A picture dropped into the product_images folder, e.g. samsung_wall.jpg or logo_samsung.png (jpg/jpeg/png/webp). Returns base64 or ''."""
+def _read_b64(path, mtime):
     import base64
-    for ext in ("jpg", "jpeg", "png", "webp"):
-        f = _IMG_DIR / f"{stem}.{ext}"
-        try:
-            if f.exists():
-                return base64.b64encode(f.read_bytes()).decode()
-        except Exception:
-            pass
+    return base64.b64encode(Path(path).read_bytes()).decode()
+
+def _file_image(stem):
+    """A picture dropped into the product_images folder, e.g. samsung_wall.jpg or logo_samsung.png.
+    File-name capitals and jpg/jpeg/png/webp don't matter, and the real format is detected from the file itself. Returns base64 or ''."""
+    try:
+        want = stem.lower()
+        for f in sorted(_IMG_DIR.iterdir()):
+            if f.is_file() and f.stem.lower() == want and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                return _read_b64(str(f), f.stat().st_mtime)
+    except Exception:
+        pass
     return ""
 
 def logo_for(brand):
