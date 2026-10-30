@@ -394,7 +394,10 @@ def calc():
     else:
         extra_days = 0
     extra_days_cost = extra_days * C["install_day_rate"]
-    set_up = maint_annual + extras + install + extra_days_cost + equip_cost + other + additional       # "Set Up Costs & Equipment"
+    install_calc = install + extra_days_cost                  # labour + electrician + extra days
+    cp_install = _num("q_cp_install")                         # admin override of the installation cost
+    install_total = cp_install if cp_install > 0 else install_calc
+    set_up = maint_annual + extras + install_total + equip_cost + other + additional       # "Set Up Costs & Equipment"
     subtotal = set_up + equip_srrp                                                    # "Sub Total for lease calcs"
     term = int(st.session_state.get("q_term", 84))
     rr = rate_row(term)
@@ -418,7 +421,7 @@ def calc():
     return dict(
         qty=qty, counts=counts, n_units=sum(counts.values()), n_all=sum(q for _, q in qty),
         equip_cost=equip_cost, equip_srrp=equip_srrp, maint_annual=maint_annual, extras=extras, install=install,
-        extra_days=extra_days, extra_days_cost=extra_days_cost, journey=journey, far=far, days_mode=mode,
+        extra_days=extra_days, extra_days_cost=extra_days_cost, install_calc=install_calc, install_total=install_total, cp_install_on=cp_install > 0, journey=journey, far=far, days_mode=mode,
         support=(cp_support if cp_support > 0 else maint_annual), cp_rental_on=cp_rental > 0, cp_cash_on=cp_cash > 0,
         cp_support_on=cp_support > 0, cash_calc=round(cash_list - vol_disc, 2),
         other=other, additional=additional, set_up=set_up, subtotal=subtotal, term=term, term_label=rr["label"],
@@ -1062,6 +1065,33 @@ def _brand_badge(brand):
     return (f"<div style='display:inline-block;background:#fff;border-radius:8px;padding:.1rem .7rem;margin:.1rem 0 .4rem;"
             f"font-weight:800;letter-spacing:.04em;color:{col};border:2px solid {col}'>{esc(brand.upper())}</div>")
 
+def _install_workings():
+    """Shows how the automatic install days were worked out (journey, days) so the consultant can see it applied."""
+    C = CALC; j = C["journey"]; mode = C["days_mode"]
+    with st.container(border=True):
+        st.markdown("**🚐 Installation days - worked out automatically**")
+        if mode.startswith("Add"):
+            st.markdown(f"Days added manually: **{C['extra_days']}**" + (f" × {money(COST['install_day_rate'])} = {money(C['extra_days_cost'])}" if IS_ADMIN else ""))
+        elif mode.startswith("No"):
+            st.markdown("Extra install days are switched off for this quote (Quote tab).")
+        elif not Q("q_postcode"):
+            st.markdown("No customer postcode yet - enter it on the Customer tab and the journey is worked out here.")
+        elif j is None:
+            st.markdown("Couldn't work out the journey for that postcode - check it, or choose 'Add days manually' on the Quote tab.")
+        else:
+            _hm = f"{int(j['hours'])}h {int(round((j['hours'] % 1) * 60)):02d}m"
+            st.markdown(f"Office ({esc(office_postcode())}) to {esc(Q('q_postcode').upper())}: **{_hm}, {j['miles']:.0f} miles** ({j['how']})")
+            st.markdown(f"Rule: more than {COST['travel_hours']:g} hours away adds one install day per unit ({C['n_units']} unit{'s' if C['n_units'] != 1 else ''} selected).")
+            if C["far"]:
+                st.markdown(f"➡️ **{C['extra_days']} extra day{'s' if C['extra_days'] != 1 else ''} added**"
+                            + (f" × {money(COST['install_day_rate'])} = {money(C['extra_days_cost'])}" if IS_ADMIN else "")
+                            + f" - quoted as 'estimated {C['extra_days']} day{'s' if C['extra_days'] != 1 else ''} install'.")
+            else:
+                st.markdown("➡️ Within range - **no extra days**.")
+        if IS_ADMIN:
+            st.caption(f"Installation cost: labour + electrician {money(C['install'])} + extra days {money(C['extra_days_cost'])} = {money(C['install_calc'])}"
+                       + (f"  ·  admin override in use: {money(C['install_total'])}" if C["cp_install_on"] else ""))
+
 with t_eq:
     st.markdown("#### Equipment")
     st.caption("Choose the manufacturer on each card, then the size, then how many. Everything you choose is listed under the card. "
@@ -1125,6 +1155,8 @@ with t_eq:
         with st.expander(g, expanded=False):
             if picked:
                 st.markdown(f"<div style='font-size:.85rem;color:#FFB26B'>✔ {picked} selected in {esc(g)}</div>", unsafe_allow_html=True)
+            if g == "Labour":
+                _install_workings()
             ncol = 3
             for r0 in range(0, len(items), ncol):
                 cols = st.columns(ncol)
@@ -1167,7 +1199,7 @@ with t_quote:
                 if CALC["far"]:
                     st.info(f"🚐 {_hm} ({_j['miles']:.0f} miles) from our office - more than {COST['travel_hours']:g} hours, so "
                             f"{CALC['extra_days']} extra install day{'s' if CALC['extra_days'] != 1 else ''} added "
-                            f"({money(CALC['extra_days_cost'])}). Estimated {CALC['extra_days']} day{'s' if CALC['extra_days'] != 1 else ''} install.")
+                            + (f"({money(CALC['extra_days_cost'])}). " if IS_ADMIN else "") + f"Estimated {CALC['extra_days']} day{'s' if CALC['extra_days'] != 1 else ''} install.")
                 else:
                     st.caption(f"🚐 {_hm} ({_j['miles']:.0f} miles) from our office - within {COST['travel_hours']:g} hours, so no extra days.")
         st.text_area("Special conditions (printed on the order form)", key="q_special", height=100)
@@ -1238,7 +1270,8 @@ with t_cons:
         st.markdown("##### Admin - full profit & loss")
         rows = [("Equipment cost", C["equip_cost"]), ("Equipment SRRP (selling price of equipment)", C["equip_srrp"]),
                 ("Maintenance (annual)", C["maint_annual"]), ("Extras (cherry picker, pumps)", C["extras"]),
-                ("Installation (labour + electrician)", C["install"]), ("Extra install days", C["extra_days_cost"]), ("Cashback + other costs", C["other"]),
+                ("Installation - labour + electrician (calculated)", C["install"]), ("Extra install days (calculated)", C["extra_days_cost"]),
+                ("Installation cost used" + (" (admin override)" if C["cp_install_on"] else ""), C["install_total"]), ("Cashback + other costs", C["other"]),
                 ("Telemarketing, override, min. commission", C["additional"]),
                 ("Set-up costs & equipment", C["set_up"]), ("Sub total for lease calcs", C["subtotal"]),
                 ("Customer rate / funder rate (per £1,000)", f"{C['rate']:.2f} / {C['true_rate']:.2f}"),
@@ -1369,7 +1402,7 @@ if IS_ADMIN and t_admin is not None:
         a_cp, a_cat, a_rates, a_costs, a_co, a_bk = st.tabs(["Customer prices", "Catalogue", "Lease rates", "Costs & fees", "Company & terms", "Backup"])
 
         def _reset_cp():
-            for _k in ("q_cp_rental", "q_cp_cash", "q_cp_support"):
+            for _k in ("q_cp_rental", "q_cp_cash", "q_cp_support", "q_cp_install"):
                 st.session_state[_k] = 0.0
 
         with a_cp:
@@ -1388,6 +1421,11 @@ if IS_ADMIN and t_admin is not None:
             r1, r2, r3 = st.columns([2.2, 1.4, 1.6])
             r1.markdown("Annual support after the included period (plus VAT)"); r2.markdown(money(Cc["maint_annual"]))
             r3.number_input("Annual support", min_value=0.0, step=10.0, key="q_cp_support", label_visibility="collapsed")
+            r1, r2, r3 = st.columns([2.2, 1.4, 1.6])
+            r1.markdown("Installation cost - labour, electrician and extra days (our cost, not shown to the customer)"); r2.markdown(money(Cc["install_calc"]))
+            r3.number_input("Installation cost", min_value=0.0, step=10.0, key="q_cp_install", label_visibility="collapsed")
+            if Cc["cp_install_on"]:
+                st.caption("The installation cost is overridden - the calculated rental and cash price use it. (If you also set a customer price above, that price wins.)")
             st.button("↩️ Reset to calculated prices", on_click=_reset_cp, key="btn_reset_cp")
             st.divider()
             y1, y2, y3 = st.columns(3)
