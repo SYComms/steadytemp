@@ -393,7 +393,8 @@ def calc():
             if auto_install:
                 continue                                      # manual labour lines are ignored while the automatic costs are in use
             qty.append((it, q))
-            labour_cost += q * float(it["cost"]); labour_srrp += q * srrp_of(it)
+            _m = max(1, int(_num("q_engineers") or 1)) if "engineer" in it["name"].lower() else 1     # manual engineer-day lines are multiplied by the team size
+            labour_cost += q * _m * float(it["cost"]); labour_srrp += q * _m * srrp_of(it)
             if "engineer" in it["name"].lower():
                 eng_days += q
             continue
@@ -426,9 +427,9 @@ def calc():
         extra_days = n_units                                  # a day per unit, the first covering the travel
     else:
         extra_days = 0
-    engineers = max(1, int(_num("q_engineers") or 1)) if auto_install else 1
+    engineers = max(1, int(_num("q_engineers") or 1))
     _days_worked = max(extra_days, 1)                         # a second engineer is charged for every day on site (at least one)
-    extra_eng_cost = (engineers - 1) * _days_worked * C["install_day_rate"]
+    extra_eng_cost = ((engineers - 1) * _days_worked * C["install_day_rate"]) if auto_install else 0.0
     extra_days_cost = extra_days * C["install_day_rate"] + extra_eng_cost
     install_calc = (install + extra_days_cost) if auto_install else labour_cost        # engineer + electrician + extra days, or the manual lines
     est_days = (max(extra_days, 1) if engineers > 1 else extra_days) if auto_install else eng_days
@@ -1322,6 +1323,8 @@ def _install_workings():
                             + f" - quoted as 'estimated {C['extra_days']} day{'s' if C['extra_days'] != 1 else ''} install'.")
             else:
                 st.markdown("➡️ Within range - **no extra days**.")
+        if (not C["auto_install"]) and C["engineers"] > 1:
+            st.markdown(f"👷 **{C['engineers']} engineers** - the engineer-day lines below are counted for each engineer.")
         if C["auto_install"] and C["engineers"] > 1:
             st.markdown(f"👷 **{C['engineers']} engineers** on site for {max(C['extra_days'], 1)} day{'s' if max(C['extra_days'], 1) != 1 else ''}"
                         + (f" - the extra {C['engineers'] - 1} engineer{'s' if C['engineers'] > 2 else ''} add {money(C['extra_eng_cost'])}." if IS_ADMIN else "."))
@@ -1401,9 +1404,9 @@ with t_eq:
                 st.checkbox("Use automatic installation costs", value=True, key="q_auto_install",
                             help="Ticked: the install labour, electrician and any extra days are worked out for you, and the manual lines below are ignored. "
                                  "Untick to cost the installation yourself using the lines below instead.")
-                if CALC["auto_install"]:
-                    st.selectbox("Number of engineers", [1, 2, 3, 4], key="q_engineers",
-                                 help="Normally one engineer. Choose more if the job needs a bigger team - each extra engineer is charged at the daily rate for every day on site.")
+                st.selectbox("Number of engineers", [1, 2, 3, 4], key="q_engineers",
+                             help="Normally one engineer. Choose more if the job needs a bigger team. Automatic: each extra engineer is charged at the daily rate for every day on site. "
+                                  "Manual: the engineer-day lines below are multiplied by the number of engineers.")
                 _install_workings()
             ncol = 3
             for r0 in range(0, len(items), ncol):
