@@ -1028,16 +1028,20 @@ def build_quote_pdf():
     # ── systems only (no extras, materials or labour) ──
     lh_band("Your proposed system")
     shown = 0
+    n_rows = sum(1 for it, _ in C["qty"] if it["group"] in SYSTEM_GROUPS)
+    rh = 14.5 if n_rows <= 4 else 11.0          # tighter rows on bigger deals, so more of the kit (and the price) stays on page 1
+    ih = 12.0 if n_rows <= 4 else 9.0
     for it, q in C["qty"]:
         if it["group"] not in SYSTEM_GROUPS:
             continue
-        need(16)
+        if pdf.get_y() + rh + 1.5 > pdf.page_break_trigger:
+            pdf.add_page(); lh_band("Your proposed system (continued)")
         y = pdf.get_y()
         img = image_for(it)
         if img:
             try:
                 _raw = _png_bytes(img); _w, _h = _PIm.open(io.BytesIO(_raw)).size
-                _bw, _bh = 28.0, 12.0
+                _bw, _bh = 28.0, ih
                 _sc = min(_bw / _w, _bh / _h)
                 pdf.image(io.BytesIO(_raw), x=pdf.l_margin + 1 + (_bw - _w * _sc) / 2, y=y + 1 + (_bh - _h * _sc) / 2, w=_w * _sc, h=_h * _sc)
             except Exception:
@@ -1046,17 +1050,17 @@ def build_quote_pdf():
         if _lg:
             try:
                 _lraw = _png_bytes(_lg); _lw, _lh = _PIm.open(io.BytesIO(_lraw)).size
-                _lsc = min(24.0 / _lw, 7.5 / _lh)
-                pdf.image(io.BytesIO(_lraw), x=right - 52, y=y + 3.5, w=_lw * _lsc, h=_lh * _lsc)
+                _lsc = min(24.0 / _lw, (7.5 if rh > 12 else 6.0) / _lh)
+                pdf.image(io.BytesIO(_lraw), x=right - 52, y=y + (3.5 if rh > 12 else 2.2), w=_lw * _lsc, h=_lh * _lsc)
             except Exception:
                 pass
-        pdf.set_xy(pdf.l_margin + 32, y + 2)
+        pdf.set_xy(pdf.l_margin + 32, y + (2 if rh > 12 else 0.8))
         pdf.set_font("Helvetica", "B", 9); pdf.cell(90, 5, s(it["name"])[:52], ln=True)
         pdf.set_x(pdf.l_margin + 32); pdf.set_font("Helvetica", "", 8); pdf.set_text_color(100, 110, 120)
         pdf.cell(90, 4.5, s(it.get("desc") or it["group"])[:60], ln=False); pdf.set_text_color(0, 0, 0)
-        pdf.set_xy(right - 22, y + 3.5); pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(right - 22, y + (3.5 if rh > 12 else 2.2)); pdf.set_font("Helvetica", "B", 11)
         pdf.cell(22, 6, f"x {q}", align="R")
-        pdf.set_y(y + 14.5); pdf.set_draw_color(215, 225, 235); pdf.line(pdf.l_margin, pdf.get_y(), right, pdf.get_y()); pdf.set_draw_color(0, 0, 0)
+        pdf.set_y(y + rh); pdf.set_draw_color(215, 225, 235); pdf.line(pdf.l_margin, pdf.get_y(), right, pdf.get_y()); pdf.set_draw_color(0, 0, 0)
         pdf.ln(0.8)
         shown += 1
     if not shown:
@@ -1078,7 +1082,7 @@ def build_quote_pdf():
         inc.append(f"plus VAT - over {C['term']} months, subject to finance approval")
     bh = 28 if C["is_cash"] else 22
     lh_band("Your price")
-    need(bh + 8 + 5 * len(inc))                       # keep the price box and what's included together
+    need(bh + 2)                                      # keep the price box in one piece
     y = pdf.get_y()
     pdf.set_fill_color(*PALE); pdf.rect(pdf.l_margin, y, pdf.epw, bh, "F")
     pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, y, 2.2, bh, "F")
@@ -1092,7 +1096,17 @@ def build_quote_pdf():
         pdf.cell(0, 5, "MONTHLY RENTAL", ln=True)
         pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 22); pdf.cell(0, 11, money(C["rental"]) + " per month", ln=True)
     pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
-    pdf.set_font("Helvetica", "B", 9); pdf.cell(0, 5, "Included", ln=True)
+
+    # ── page 2: what's included, next steps and sign-off (page 1 keeps the systems and the price) ──
+    if pdf.page_no() == 1:
+        pdf.add_page()
+    if pdf.get_y() <= pdf.t_margin + 1:
+        pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*BLUE)
+        pdf.cell(0, 5, s(f"Quotation {quote_ref()}" + (f"  -  {Q('q_company')}" if Q("q_company") else "")), ln=True)
+        pdf.set_font("Helvetica", "", 8); pdf.set_text_color(90, 100, 110)
+        pdf.cell(0, 4.5, s("Continued - " + (f"{money(C['cash_price'])} plus VAT" if C["is_cash"] else f"{money(C['rental'])} per month plus VAT")), ln=True)
+        pdf.set_text_color(0, 0, 0)
+    lh_band("What's included")
     for t in inc:
         pdf.set_font("Helvetica", "", 8.5); pdf.set_x(pdf.l_margin + 3); pdf.cell(0, 5, s("-  " + t), ln=True)
     ex, ex_total = existing_costs()
