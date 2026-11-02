@@ -1163,7 +1163,9 @@ with st.sidebar:
     st.caption(Q("q_company") or "No customer yet")
     st.metric("Systems", CALC["n_units"])
     _rental_block()
-    st.metric("Annual support (after year 1)", "-" if CALC["n_all"] == 0 else money(CALC["support"]))
+    st.markdown(f"<div style='display:flex;justify-content:space-between;align-items:baseline;margin-top:.2rem'>"
+                f"<span style='font-size:.76rem;color:#9FB6CA'>Annual support (after year 1)</span>"
+                f"<span style='font-size:.95rem;font-weight:600'>{'-' if CALC['n_all'] == 0 else esc(money(CALC['support']))}</span></div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### 🎯 Target rental")
@@ -1180,7 +1182,7 @@ with st.sidebar:
     _gp = CALC["cash_gp"] if CALC["is_cash"] else CALC["gp"]
     if CALC["n_all"] > 0:
         st.markdown(f"<div style='font-size:1.05rem;font-weight:700;color:#FFB26B'>Units: {_un:.2f}</div>"
-                    f"<div style='font-size:.74rem;color:#7F95AA'>This is what your commission is based on.</div>", unsafe_allow_html=True)
+                    , unsafe_allow_html=True)
         if _gp < 0:
             st.markdown("<div class='st-bad'>⛔ Below cost - raise the rental.</div>", unsafe_allow_html=True)
         elif _un < 0.25:
@@ -1230,12 +1232,12 @@ with st.sidebar:
             del st.session_state[k]
         st.rerun()
 
-tab_names = ["❄️ Equipment", "💷 Quote", "📄 Paperwork", "✍️ Sign & Send"]
+tab_names = ["❄️ Equipment", "💷 Quote", "👤 Customer View", "📄 Paperwork", "✍️ Sign & Send"]
 if IS_ADMIN:
     tab_names.append("🔐 Admin")
 TABS = st.tabs(tab_names)
-t_eq, t_quote, t_paper, t_sign = TABS[:4]
-t_admin = TABS[4] if IS_ADMIN else None
+t_eq, t_quote, t_cv, t_paper, t_sign = TABS[:5]
+t_admin = TABS[5] if IS_ADMIN else None
 
 # ───────────────────────────── equipment ─────────────────────────────
 def _qty_cb(name):
@@ -1521,6 +1523,73 @@ def _ready():
     if not Q("q_signatory"): miss.append("signatory name & position")
     if CALC["n_units"] == 0: miss.append("at least one air conditioning system")
     return miss
+
+# ───────────────────────────── customer view (for showing the customer on screen in a demo) ─────────────────────────────
+with t_cv:
+    _cvc = "background:#101B2D;border:1px solid #22344F;border-radius:14px;padding:1rem 1.2rem;"
+    st.markdown(f"<div style='{_cvc}border-top:2px solid #4FD1C5;margin-bottom:1rem'>"
+                f"<div style='font-size:1.5rem;font-weight:800'>{esc(CO['trading'])}</div>"
+                f"<div style='color:#9FB6CA;font-size:.9rem'>{('Prepared for: ' + esc(Q('q_company'))) if Q('q_company') else 'Add the customer name in the left-hand bar'}"
+                f" &nbsp;|&nbsp; {esc(CALC['term_label']) if not CALC['is_cash'] else 'Cash purchase'}</div></div>", unsafe_allow_html=True)
+    _eq = [(it, q) for it, q in CALC["qty"] if it["group"] not in ("Materials", "Labour")]
+    if not _eq:
+        st.info("👈 Choose the equipment on the Equipment tab and it will appear here.")
+    else:
+        st.markdown("##### ❄️ Your new system")
+        for r0 in range(0, len(_eq), 4):
+            cols = st.columns(4)
+            for col, (it, q) in zip(cols, _eq[r0:r0 + 4]):
+                with col:
+                    _im = image_for(it) or GENERIC_IMAGES.get(it.get("kind"))
+                    col.markdown(_img_html(_im) + f"<div style='font-size:.82rem;font-weight:600;line-height:1.3'>{esc(it['name'])}</div>"
+                                 f"<div style='font-size:.75rem;color:#4FD1C5;font-weight:700'>Qty: {q}</div>", unsafe_allow_html=True)
+        st.markdown("")
+        cL, cR = st.columns([3, 2])
+        _ex, _ex_total = existing_costs()
+        with cL:
+            if CALC["is_cash"]:
+                st.markdown("##### 📊 Cost comparison")
+                st.caption("The comparison with the customer's current monthly costs is shown for rental quotes. Switch to Lease on the Quote tab to see it.")
+            elif _ex_total > 0:
+                st.markdown("##### 📊 Cost comparison")
+                _rows = "".join(f"<tr><td style='padding:7px 10px;border-bottom:1px solid #22344F'>{esc(l)}</td>"
+                                f"<td style='padding:7px 10px;border-bottom:1px solid #22344F;text-align:right;color:#9FB6CA'>{money(v)}</td></tr>" for l, v in _ex if v)
+                _diff = _ex_total - CALC["rental"]
+                _col = "#34D399"
+                _tbl = ("<table style='width:100%;border-collapse:collapse;font-size:.9rem;background:#101B2D;border-radius:10px'>"
+                        "<tr style='background:#16233A'><th style='padding:8px 10px;text-align:left'>What you pay now (monthly)</th><th style='padding:8px 10px;text-align:right'>Current</th></tr>"
+                        + _rows +
+                        f"<tr style='font-weight:700'><td style='padding:8px 10px'>Total now</td><td style='padding:8px 10px;text-align:right'>{money(_ex_total)}</td></tr>"
+                        f"<tr style='background:#16233A'><th style='padding:8px 10px;text-align:left'>With {esc(CO['trading'])}</th><th style='padding:8px 10px;text-align:right'>New</th></tr>"
+                        f"<tr><td style='padding:7px 10px;border-bottom:1px solid #22344F'>Equipment, installation and {int(COST['free_support_years'])} year on-site support (monthly, ex VAT)</td>"
+                        f"<td style='padding:7px 10px;border-bottom:1px solid #22344F;text-align:right;font-weight:700'>{money(CALC['rental'])}</td></tr></table>")
+                if _diff >= 0:
+                    _lbl, _big, _sub = "Monthly saving", money(_diff), f"{money(_diff * 12)} per year"
+                else:
+                    _lbl, _big, _sub = "Daily investment", money(abs(_diff) / 30.44), "per day, for everything included"
+                _tbl += (f"<div style='margin-top:1rem;padding:1rem 1.4rem;background:rgba(52,211,153,.12);border-radius:10px;border-left:4px solid {_col}'>"
+                         f"<div style='font-size:.8rem;color:{_col};font-weight:700;text-transform:uppercase;letter-spacing:.06em'>{_lbl}</div>"
+                         f"<div style='font-size:1.8rem;font-weight:800;color:{_col}'>{_big}</div>"
+                         f"<div style='color:{_col}'>{_sub}</div></div>")
+                st.markdown(_tbl, unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='padding:.8rem 1rem;background:#101B2D;border:1px dashed #2C4466;border-radius:8px;font-size:.83rem;color:#9FB6CA;text-align:center'>"
+                            "💡 Fill in the customer's <b>Current customer costs</b> in the left-hand bar to show a cost comparison here.</div>", unsafe_allow_html=True)
+        with cR:
+            st.markdown("##### 💳 Your investment")
+            _lab = "Cash price (one-off)" if CALC["is_cash"] else "Monthly rental"
+            _val = money(CALC["cash_price"]) if CALC["is_cash"] else money(CALC["rental"])
+            st.markdown(f"<div style='{_cvc}text-align:center'><div style='color:#9FB6CA;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em'>{_lab}</div>"
+                        f"<div style='font-size:2.3rem;font-weight:800'>{_val}</div>"
+                        f"<div style='color:#7F95AA;font-size:.8rem'>plus VAT" + ("" if CALC["is_cash"] else f" · {esc(CALC['profile'])} · {esc(CALC['term_label'])}") + "</div></div>", unsafe_allow_html=True)
+            st.markdown("##### ✅ What's included")
+            for t in ["Supply and installation by qualified F-Gas engineers, including all materials",
+                      f"{int(COST['free_support_years'])} year on-site support",
+                      "Manufacturer warranty", "Full commissioning and set-up"]:
+                st.markdown(f"<div style='font-size:.88rem;padding:.2rem 0'>✅ {esc(t)}</div>", unsafe_allow_html=True)
+            if int(CALC["extra_days"] or 0) == 0 and False:
+                pass
+            st.caption("All figures exclude VAT. Subject to survey and credit approval.")
 
 with t_paper:
     st.markdown("#### Paperwork pack")
