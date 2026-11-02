@@ -1176,6 +1176,9 @@ def _rental_block(target=None):
     if CALC.get("provisional") and not CALC["is_cash"]:
         t.caption("⚠️ The rates for this term are provisional - confirm with the office before quoting.")
 
+def _clear_target_cb():
+    st.session_state["q_desired_rental"] = None      # done in a callback, before the box is drawn again
+
 with st.sidebar:
     st.markdown("### Quote summary")
     st.caption(Q("q_company") or "No customer yet")
@@ -1193,9 +1196,7 @@ with st.sidebar:
         st.number_input("Target rental (£/mo)", min_value=0.0, value=None, step=5.0, key="q_desired_rental",
                         placeholder="Using calculated rental",
                         help="Enter the monthly rental you'd like to quote. Leave empty to use the calculated rental. The units below show what the deal is worth.")
-        if st.button("✖ Clear target", key="btn_clear_target", **FW):
-            st.session_state["q_desired_rental"] = None
-            st.rerun()
+        st.button("✖ Clear target", key="btn_clear_target", on_click=_clear_target_cb, **FW)
     _un = CALC["cash_units"] if CALC["is_cash"] else CALC["units"]
     _gp = CALC["cash_gp"] if CALC["is_cash"] else CALC["gp"]
     if CALC["n_all"] > 0:
