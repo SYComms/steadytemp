@@ -174,7 +174,7 @@ def default_config():
             "electrician": 200.0, "cherry_picker": 700.0, "pump": 200.0,
             "telemarketing": 200.0, "sales_override": 100.0, "min_commission": 0.0,
             "cash_load": 1.0,
-            "unit_size": 2500.0, "unit_value": 1000.0,
+            "unit_size": 1000.0, "unit_value": 1000.0,
             "free_support_years": 1,
             "install_day_rate": 500.0, "travel_hours": 2.0,
         },
@@ -207,11 +207,11 @@ CONFIG_FILE = "config.json"
 
 def load_config():
     cfg = default_config()
-    ver = 9                                   # nothing saved yet = already the newest catalogue
+    ver = 10                                  # nothing saved yet = already the newest catalogue
     try:
         if Path(CONFIG_FILE).exists():
             saved = json.loads(Path(CONFIG_FILE).read_text(encoding="utf-8"))
-            ver = int(saved.get("catalogue_version", 1)) if "catalogue" in saved else 9
+            ver = int(saved.get("catalogue_version", 1)) if "catalogue" in saved else 10
             for k, v in saved.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                     cfg[k].update(v)
@@ -252,7 +252,9 @@ def load_config():
             if _i.get("group") == "Labour" or _c <= 0 or _r <= 0:
                 continue
             _i["cost"] = round(_r, 2); _i["rrp"] = round(_r * (_r / _c), 2)
-    cfg["catalogue_version"] = 9
+    if ver < 10:       # v10: commission unit = £1,000 profit
+        cfg["costs"]["unit_size"] = 1000.0
+    cfg["catalogue_version"] = 10
     if not cfg.get("terms"):
         cfg["terms"] = [list(t) for t in TERMS_DEFAULT]
     return cfg
