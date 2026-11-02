@@ -426,9 +426,12 @@ def calc():
         extra_days = n_units                                  # a day per unit, the first covering the travel
     else:
         extra_days = 0
-    extra_days_cost = extra_days * C["install_day_rate"]
+    engineers = max(1, int(_num("q_engineers") or 1)) if auto_install else 1
+    _days_worked = max(extra_days, 1)                         # a second engineer is charged for every day on site (at least one)
+    extra_eng_cost = (engineers - 1) * _days_worked * C["install_day_rate"]
+    extra_days_cost = extra_days * C["install_day_rate"] + extra_eng_cost
     install_calc = (install + extra_days_cost) if auto_install else labour_cost        # engineer + electrician + extra days, or the manual lines
-    est_days = extra_days if auto_install else eng_days
+    est_days = (max(extra_days, 1) if engineers > 1 else extra_days) if auto_install else eng_days
     cp_install = _num("q_cp_install")                         # admin override of the installation cost
     install_total = cp_install if cp_install > 0 else install_calc
     set_up = maint_annual + extras + install_total + equip_cost + other + additional       # "Set Up Costs & Equipment"
@@ -455,7 +458,7 @@ def calc():
     return dict(
         qty=qty, counts=counts, n_units=sum(counts.values()), n_all=sum(q for _, q in qty),
         equip_cost=equip_cost, equip_srrp=equip_srrp, maint_annual=maint_annual, extras=extras, install=install, install_elec=install_elec, install_eng=install_eng,
-        extra_days=extra_days, extra_days_cost=extra_days_cost, install_calc=install_calc, install_total=install_total, auto_install=auto_install, labour_cost=labour_cost, est_days=est_days, cp_install_on=cp_install > 0, journey=journey, far=far, days_mode=mode,
+        extra_days=extra_days, engineers=engineers, extra_eng_cost=extra_eng_cost, extra_days_cost=extra_days_cost, install_calc=install_calc, install_total=install_total, auto_install=auto_install, labour_cost=labour_cost, est_days=est_days, cp_install_on=cp_install > 0, journey=journey, far=far, days_mode=mode,
         support=(cp_support if cp_support > 0 else maint_annual), cp_rental_on=cp_rental > 0, cp_cash_on=cp_cash > 0,
         cp_support_on=cp_support > 0, cash_calc=round(cash_list - vol_disc, 2),
         other=other, additional=additional, set_up=set_up, subtotal=subtotal, term=term, term_label=rr["label"],
@@ -943,7 +946,7 @@ def build_quote_pdf():
         pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 24); pdf.cell(0, 12, money(C["rental"]) + " per month", ln=True)
     pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
     inc = [f"Supply and installation by qualified F-Gas engineers, including all materials",
-           *([f"Estimated {C['est_days']} day{'s' if C['est_days'] != 1 else ''} install"] if C["est_days"] > 0 else []),
+           *([f"Estimated {C['est_days']} day{'s' if C['est_days'] != 1 else ''} install" + (f" with {C['engineers']} engineers" if C.get("engineers", 1) > 1 else "")] if C["est_days"] > 0 else []),
            f"{fy} year{'s' if fy != 1 else ''} on-site support and warranty included",
            f"Then on-site support at {money(C['support'])} per year plus VAT for the rest of the agreement"]
     if _num("q_cashback") > 0:
@@ -1073,17 +1076,24 @@ def build_shire(C, sign=None):
         txt(4, f"Text{22 + i}", d, 11, True, "C")
     for i, d in enumerate(v["sort"][:6]):
         txt(4, f"Text{30 + i}", d, 11, True, "C")
-    # page 5 - confirmation of delivery (signed on delivery, so only the details are filled in)
+    # page 5 - confirmation of delivery (details always; name, date and signature when the customer signs)
     txt(5, "Full Business Name inc any Trading Name", v["hirer"], 9, True)
     txt(5, "Address", v["address"] + (", " + v["postcode"] if v["postcode"] else ""), 8)
     b = box.get((5, "Description of the Equipment including software"))
     if b:
         ops[5].append(("m", b, s(v["desc"]), 8))
+    # page 2 - Shire's printed example ("Alex Sample", 20/07/18): cover the sample entries, and show this customer's own when signed
+    for r in ((165, 284, 150, 25), (165, 316, 130, 15), (409, 290, 62, 15), (409, 316, 62, 15)):
+        ops[2].append(("w", r))
     # signatures, names, positions and dates (the form has no boxes for these, so they are placed on the printed lines)
     if sign:
         free(3, 138, 740, 170, 12, v["signer"], 9); free(3, 470, 741, 100, 12, v["position"], 9); free(3, 470, 715, 100, 12, v["when"] or date.today().strftime("%d/%m/%Y"), 9)
         free(4, 495, 596, 80, 12, v["when"] or date.today().strftime("%d/%m/%Y"), 9)
-        sigs = {3: (136, 700, 175, 36), 4: (350, 566, 200, 30)}
+        _d = v["when"] or date.today().strftime("%d/%m/%Y")
+        free(5, 115, 482, 300, 12, (v["signer"] or "").upper(), 9); free(5, 471, 482, 100, 12, v["position"], 9); free(5, 471, 453, 100, 12, _d, 9)
+        free(2, 168, 318, 150, 12, v["signer"], 8, True); free(2, 410, 318, 62, 12, v["position"], 8, True); free(2, 410, 292, 62, 12, _d, 8, True)
+        ops[2].append(("sig", (168, 285, 140, 24)))
+        sigs = {3: (136, 700, 175, 36), 4: (350, 566, 200, 30), 5: (115, 436, 175, 36)}
         for pg, (x, top, w, h) in sigs.items():
             ops[pg].append(("sig", (x, top, w, h)))
     for n in range(1, len(rd.pages) + 1):
@@ -1099,6 +1109,9 @@ def build_shire(C, sign=None):
                 _, (x, top, w, h), text, size = op
                 ov.set_text_color(10, 20, 110); ov.set_font("Helvetica", "", size)
                 ov.set_xy(x + 1.5, top + 2); ov.multi_cell(w - 3, size + 1.6, text, max_line_height=size + 1.6)
+            elif op[0] == "w":
+                _, (x, top, w, h) = op
+                ov.set_fill_color(255, 255, 255); ov.rect(x, top, w, h, "F")
             elif op[0] == "sig" and sign and sign.get("bytes"):
                 _, (x, top, w, h) = op
                 try:
@@ -1289,6 +1302,8 @@ def _install_workings():
         if not C["auto_install"]:
             st.markdown("Automatic installation costs are switched off. Only the labour lines below are used: "
                         f"**{C['est_days']} engineer day{'s' if C['est_days'] != 1 else ''}** selected.")
+        elif False:
+            pass
         elif mode.startswith("Add"):
             st.markdown(f"Days added manually: **{C['extra_days']}**" + (f" × {money(COST['install_day_rate'])} = {money(C['extra_days_cost'])}" if IS_ADMIN else ""))
         elif mode.startswith("No"):
@@ -1307,6 +1322,9 @@ def _install_workings():
                             + f" - quoted as 'estimated {C['extra_days']} day{'s' if C['extra_days'] != 1 else ''} install'.")
             else:
                 st.markdown("➡️ Within range - **no extra days**.")
+        if C["auto_install"] and C["engineers"] > 1:
+            st.markdown(f"👷 **{C['engineers']} engineers** on site for {max(C['extra_days'], 1)} day{'s' if max(C['extra_days'], 1) != 1 else ''}"
+                        + (f" - the extra {C['engineers'] - 1} engineer{'s' if C['engineers'] > 2 else ''} add {money(C['extra_eng_cost'])}." if IS_ADMIN else "."))
         if IS_ADMIN and not C["auto_install"]:
             st.caption(f"Installation cost: manual labour lines {money(C['labour_cost'])}" + (f"  ·  admin override in use: {money(C['install_total'])}" if C["cp_install_on"] else ""))
         elif IS_ADMIN:
@@ -1383,6 +1401,9 @@ with t_eq:
                 st.checkbox("Use automatic installation costs", value=True, key="q_auto_install",
                             help="Ticked: the install labour, electrician and any extra days are worked out for you, and the manual lines below are ignored. "
                                  "Untick to cost the installation yourself using the lines below instead.")
+                if CALC["auto_install"]:
+                    st.selectbox("Number of engineers", [1, 2, 3, 4], key="q_engineers",
+                                 help="Normally one engineer. Choose more if the job needs a bigger team - each extra engineer is charged at the daily rate for every day on site.")
                 _install_workings()
             ncol = 3
             for r0 in range(0, len(items), ncol):
