@@ -154,10 +154,11 @@ def default_config():
     return {
         "company": {
             "trading": "SteadyTemp Air Conditioning",
-            "legal": "SY Comms Ltd",
-            "legal_line": "SteadyTemp Air Conditioning is a trading name of SY Comms Ltd",
+            "legal": "SteadyTemp LTD",
+            "legal_line": "",
+            "reg_office": "The Belfry, 4400 Parkway, Whiteley, Fareham, England, PO15 7FJ",
             "addr": ["Suite C Jupiter House", "Sitka Drive", "Shrewsbury Business Park", "Shropshire", "SY2 6LG"],
-            "reg": "Registered in England 15722588",
+            "reg": "Company number 17506149",
             "vat": "VAT Registration No. Pending",
             "email": "andy@steadytemp.co.uk",
             "phone": "01743 832049",
@@ -274,18 +275,55 @@ if "cfg" not in st.session_state:
 CFG = st.session_state.cfg
 CO = CFG["company"]
 CO.update(FIXED_CONTACT)
+# SteadyTemp now trades as its own company (SteadyTemp LTD): replace the old SY Comms details if a saved config still has them
+if "sy comms" in (str(CO.get("legal", "")) + str(CO.get("legal_line", ""))).lower() or "15722588" in str(CO.get("reg", "")):
+    _d = default_config()["company"]
+    CO.update(legal=_d["legal"], legal_line="", reg=_d["reg"], reg_office=_d["reg_office"])
+CO.setdefault("reg_office", default_config()["company"]["reg_office"])
 COST = CFG["costs"]
 
 # ───────────────────────────── sign-in ─────────────────────────────
 for _k, _v in (("authed", False), ("current_user", None)):
     st.session_state.setdefault(_k, _v)
 
+LOGO_FILE = Path(__file__).parent / "steadytemp_logo.png"      # the logo from the letterhead, used on the paperwork and in the portal
+
+def _logo_stream():
+    """The letterhead logo (steadytemp_logo.png next to app.py); falls back to a logo uploaded in Admin."""
+    try:
+        if LOGO_FILE.exists():
+            return io.BytesIO(LOGO_FILE.read_bytes())
+    except Exception:
+        pass
+    b = CO.get("logo_b64") or ""
+    if not b:
+        return None
+    try:
+        import base64
+        return io.BytesIO(base64.b64decode(b))
+    except Exception:
+        return None
+
+def logo_html(height=44):
+    """The logo as an <img> for the portal (on a white tile so it reads on the dark theme)."""
+    lg = _logo_stream()
+    if lg is None:
+        return ""
+    import base64
+    return f"<img src='data:image/png;base64,{base64.b64encode(lg.getvalue()).decode()}' style='height:{height}px;display:block'>"
+
 def _login_screen():
     _l, _m, _r = st.columns([1, 1.2, 1])
     with _m:
-        st.markdown(f"<div style='text-align:center;margin:2.5rem 0 1rem'><div style='font-size:2.4rem'>❄️</div>"
-                    f"<div style='font-size:1.7rem;font-weight:800;color:#FF8A2A'>{esc(CO['trading'])}</div>"
-                    f"<div style='color:#7FC8EE'>Quotes &amp; paperwork</div></div>", unsafe_allow_html=True)
+        _lg = logo_html(58)
+        if _lg:
+            st.markdown(f"<div style='margin:2.5rem 0 1rem;text-align:center'><div style='display:inline-block;background:#fff;border-radius:16px;"
+                        f"padding:16px 22px;border-bottom:4px solid #FF650D'>{_lg}</div>"
+                        f"<div style='color:#7FC8EE;margin-top:.7rem'>Quotes &amp; paperwork</div></div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='text-align:center;margin:2.5rem 0 1rem'><div style='font-size:2.4rem'>❄️</div>"
+                        f"<div style='font-size:1.7rem;font-weight:800;color:#FF650D'>{esc(CO['trading'])}</div>"
+                        f"<div style='color:#7FC8EE'>Quotes &amp; paperwork</div></div>", unsafe_allow_html=True)
         with st.container(border=True):
             if USERS:
                 em = st.text_input("Email", key="lg_email", placeholder="you@yourcompany.co.uk")
@@ -523,7 +561,8 @@ def _load_quote_cb():
         st.session_state["_quote_loaded"] = "ERR"
 
 # ───────────────────────────── paperwork (PDF) ─────────────────────────────
-NAVY, ACCENT, PALE = (16, 41, 74), (255, 138, 42), (232, 243, 251)
+NAVY, ACCENT, PALE = (4, 67, 174), (255, 101, 13), (232, 240, 251)      # SteadyTemp letterhead blue and orange
+DEEP = (0, 40, 105)                                                       # the dark blue of the letterhead footer
 
 def Q(key, default=""):
     v = st.session_state.get(key, default)
@@ -536,49 +575,57 @@ def split_name_pos(raw):
     parts = [p.strip() for p in str(raw or "").split(" - ", 1)]
     return parts[0], (parts[1] if len(parts) > 1 else "")
 
+def company_lines():
+    """The two lines of company details printed at the foot of every page (as on the letterhead)."""
+    l1 = "  |  ".join(x for x in (CO.get("legal"), CO.get("reg_office"), CO.get("reg")) if x)
+    l2 = "  |  ".join(x for x in (", ".join(a for a in CO["addr"] if a), CO.get("vat") if "pending" not in str(CO.get("vat", "")).lower() else "") if x)
+    return l1, l2
+
 class DocPDF(FPDF):
     def footer(self):
-        self.set_y(-12)
-        self.set_font("Helvetica", "", 7)
-        self.set_text_color(120, 130, 140)
-        self.cell(0, 4, s(f"{CO['legal_line']}  |  {CO['reg']}"), align="C", ln=True)
-        self.cell(0, 4, f"Page {self.page_no()} of {{nb}}", align="C")
+        """Letterhead-style footer: orange and blue bands with the company details."""
+        h = 14
+        y = self.h - h
+        self.set_fill_color(*ACCENT); self.rect(0, y - 1.1, self.w, 1.1, "F")
+        self.set_fill_color(*DEEP); self.rect(0, y, self.w, h, "F")
+        l1, l2 = company_lines()
+        self.set_text_color(255, 255, 255)
+        self.set_xy(10, y + 2.6); self.set_font("Helvetica", "B", 7.2); self.cell(self.w - 20, 3.8, s(l1), align="C")
+        self.set_xy(10, y + 6.6); self.set_font("Helvetica", "", 7); self.cell(self.w - 20, 3.8, s(l2), align="C")
+        if CO.get("legal_line"):
+            self.set_xy(10, y + 10); self.set_font("Helvetica", "I", 6); self.cell(self.w - 20, 3, s(CO["legal_line"]), align="C")
+        self.set_xy(self.w - 40, y - 5.5); self.set_font("Helvetica", "", 7); self.set_text_color(130, 140, 150)
+        self.cell(30, 4, f"Page {self.page_no()} of {{nb}}", align="R")
         self.set_text_color(0, 0, 0)
 
-def _logo_stream():
-    b = CO.get("logo_b64") or ""
-    if not b:
-        return None
-    try:
-        import base64
-        return io.BytesIO(base64.b64decode(b))
-    except Exception:
-        return None
-
 def doc_header(pdf, title, subtitle=""):
+    """Letterhead-style page top: logo on the left, document title on the right, blue rule with an orange accent."""
     pdf.add_page()
-    pdf.set_fill_color(*NAVY); pdf.rect(0, 0, 210, 34, "F")
-    pdf.set_fill_color(*ACCENT); pdf.rect(0, 34, 210, 1.6, "F")
-    x0 = 12
+    pdf.set_fill_color(*NAVY); pdf.rect(0, 0, pdf.w, 2.2, "F")
+    pdf.set_fill_color(*ACCENT); pdf.rect(0, 2.2, pdf.w * 0.38, 1.0, "F")
     lg = _logo_stream()
+    title_y = 9
     if lg is not None:
         try:
-            pdf.image(lg, x=10, y=5, h=24); x0 = 48
+            pdf.image(lg, x=pdf.l_margin, y=7.5, h=15)
         except Exception:
-            x0 = 12
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_xy(x0, 8); pdf.set_font("Helvetica", "B", 19)
-    pdf.cell(110, 9, s(CO["trading"].upper()), ln=True)
-    pdf.set_x(x0); pdf.set_font("Helvetica", "", 9)
-    pdf.cell(110, 6, s(subtitle or "Air conditioning supplied, installed and supported"), ln=True)
-    pdf.set_xy(120, 8); pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(78, 8, s(title), align="R", ln=True)
+            lg = None
+    if lg is None:
+        pdf.set_xy(pdf.l_margin, 9); pdf.set_font("Helvetica", "B", 18); pdf.set_text_color(*NAVY)
+        pdf.cell(100, 9, s(CO["trading"]), ln=True)
+    pdf.set_xy(pdf.w - pdf.r_margin - 95, title_y); pdf.set_font("Helvetica", "B", 15); pdf.set_text_color(*NAVY)
+    pdf.cell(95, 8, s(title), align="R", ln=True)
+    pdf.set_xy(pdf.w - pdf.r_margin - 95, title_y + 8); pdf.set_font("Helvetica", "", 8); pdf.set_text_color(90, 100, 110)
+    pdf.cell(95, 4.5, s(subtitle or "Air conditioning supplied, installed and supported"), align="R", ln=True)
     rep = Q("q_rep")
     if rep:
-        pdf.set_xy(120, 17); pdf.set_font("Helvetica", "I", 8)
-        pdf.cell(78, 5, s(f"Prepared by: {rep}"), align="R")
+        pdf.set_x(pdf.w - pdf.r_margin - 95); pdf.set_font("Helvetica", "I", 7.5)
+        pdf.cell(95, 4, s(f"Prepared by: {rep}"), align="R")
+    pdf.set_draw_color(*NAVY); pdf.set_line_width(0.6); pdf.line(pdf.l_margin, 26, pdf.w - pdf.r_margin, 26)
+    pdf.set_draw_color(*ACCENT); pdf.set_line_width(0.6); pdf.line(pdf.w - pdf.r_margin - 30, 27.2, pdf.w - pdf.r_margin, 27.2)
+    pdf.set_draw_color(0, 0, 0); pdf.set_line_width(0.2)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_y(42)
+    pdf.set_y(32)
 
 def band(pdf, text):
     pdf.ln(2)
@@ -601,7 +648,7 @@ def kv(pdf, label, value, lw=42):
 def company_block(pdf):
     pdf.set_font("Helvetica", "", 7.5); pdf.set_text_color(70, 80, 90)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 3.8, s(", ".join(x for x in CO["addr"] if x) + "  |  " + CO["reg"] + "  |  " + CO["vat"]))
+    pdf.multi_cell(pdf.epw, 3.8, s("  |  ".join(x for x in (CO["legal"], ", ".join(x for x in CO["addr"] if x), CO["reg"], CO["vat"]) if x)))
     pdf.set_text_color(0, 0, 0)
 
 def customer_block(pdf):
@@ -836,6 +883,8 @@ def doc_terms(pdf, C, sign):
     doc_header(pdf, "Terms & Conditions")
     fill = dict(legal=CO["legal"], trading=CO["trading"], free=int(COST["free_support_years"]))
     for title, text in CFG["terms"]:
+        if pdf.get_y() + 14 > pdf.page_break_trigger:      # don't leave a clause heading on its own at the foot of a page
+            pdf.add_page()
         pdf.set_fill_color(*NAVY); pdf.set_text_color(255, 255, 255); pdf.set_font("Helvetica", "B", 8)
         pdf.cell(0, 5, "  " + s(title), fill=True, ln=True); pdf.set_text_color(0, 0, 0)
         try:
@@ -866,7 +915,7 @@ def doc_certificate(pdf, C, sign):
 def build_pack(sign=None):
     C = calc()
     pdf = DocPDF()
-    pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(True, 16); pdf.alias_nb_pages()
+    pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(True, 24); pdf.alias_nb_pages()
     for fn in (doc_proposal, doc_order, doc_support, doc_dd, doc_terms):
         fn(pdf, C, sign)
     if sign and sign.get("bytes"):
@@ -888,44 +937,107 @@ def quote_ref():
     base = (Q("q_company") or "quote").upper()
     return f"ST-{date.today():%y%m%d}-{zlib.crc32(base.encode()) % 10000:04d}"
 
+LETTERHEAD_FILE = Path(__file__).parent / "steadytemp_letterhead.jpg"   # full-page A4 letterhead behind the customer quote (replace the file to change it)
+LH_BLUE = NAVY                   # the blue in the letterhead logo
+
+class LetterheadPDF(FPDF):
+    """A4 page with the SteadyTemp letterhead as the background; the content sits inside the white area."""
+    def header(self):
+        if LETTERHEAD_FILE.exists():
+            try:
+                self.image(str(LETTERHEAD_FILE), x=0, y=0, w=210, h=297)
+            except Exception:
+                pass
+        self.set_y(self.t_margin)
+
+    def footer(self):
+        self.set_y(246); self.set_font("Helvetica", "", 7); self.set_text_color(140, 150, 160)
+        self.cell(0, 4, f"Page {self.page_no()} of {{nb}}", align="C")
+        self.set_text_color(0, 0, 0)
+
 def build_quote_pdf():
-    """A clear, customer-facing quotation (not a contract): equipment, price, term and what happens next. No costs or margins."""
-    import base64
+    """A clear, customer-facing quotation on the SteadyTemp letterhead (not a contract): the systems, price, term and what happens next.
+    Only the units are listed - extras, materials and labour are left off here (they still appear on the order paperwork). No costs or margins."""
     from datetime import timedelta
     C = calc()
-    pdf = DocPDF()
-    pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(True, 16); pdf.alias_nb_pages()
-    doc_header(pdf, "Quotation", "Air conditioning supplied, installed and supported")
+    has_lh = LETTERHEAD_FILE.exists()
+    pdf = LetterheadPDF() if has_lh else DocPDF()
+    if has_lh:
+        pdf.set_margins(19, 68, 19); pdf.set_auto_page_break(True, 54)      # keeps clear of the letterhead's logo strip and footer wave
+    else:
+        pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(True, 24)
+    pdf.alias_nb_pages()
+    right = pdf.w - pdf.r_margin
+    BLUE = LH_BLUE if has_lh else NAVY
+
+    def need(h):                      # start a new page if a block of height h won't fit
+        if pdf.get_y() + h > pdf.page_break_trigger:
+            pdf.add_page()
+
+    def lh_band(text):
+        need(14)
+        pdf.ln(2.5)
+        pdf.set_fill_color(*BLUE); pdf.set_text_color(255, 255, 255); pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, "  " + s(text).upper(), fill=True, ln=True)
+        pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, pdf.get_y(), pdf.epw, 0.6, "F")
+        pdf.set_text_color(0, 0, 0); pdf.ln(2)
+
+    if has_lh:
+        pdf.add_page()
+    else:
+        doc_header(pdf, "Quotation", "Air conditioning supplied, installed and supported")
+
+    # ── title + reference ──
     valid_days = int(COST.get("quote_valid_days", 30))
-    kv(pdf, "Quotation ref:", quote_ref())
-    kv(pdf, "Date:", date.today().strftime("%d/%m/%Y"))
-    kv(pdf, "Valid until:", (date.today() + timedelta(days=valid_days)).strftime("%d/%m/%Y"))
-    kv(pdf, "Prepared for:", Q("q_company"))
-    addr = ", ".join(cust_address_lines())
-    if addr:
-        kv(pdf, "Address:", addr)
+    y0 = pdf.get_y()
+    pdf.set_font("Helvetica", "B", 20); pdf.set_text_color(*BLUE)
+    pdf.cell(90, 9, "QUOTATION", ln=True)
+    pdf.set_font("Helvetica", "", 8.5); pdf.set_text_color(90, 100, 110)
+    pdf.cell(90, 5, "Air conditioning supplied, installed and supported", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    for i, (lab, val) in enumerate((("Quotation ref:", quote_ref()), ("Date:", date.today().strftime("%d/%m/%Y")),
+                                    ("Valid until:", (date.today() + timedelta(days=valid_days)).strftime("%d/%m/%Y")))):
+        pdf.set_xy(right - 70, y0 + 1 + i * 4.6)
+        pdf.set_font("Helvetica", "B", 8.5); pdf.set_text_color(90, 100, 110); pdf.cell(30, 4.6, lab, align="R")
+        pdf.set_font("Helvetica", "", 8.5); pdf.set_text_color(0, 0, 0); pdf.cell(40, 4.6, s(val), align="R")
+    pdf.set_y(y0 + 17)
+
+    # ── customer (left) and our contact (right) ──
+    y1 = pdf.get_y()
     contact = Q("q_contact") or split_name_pos(Q("q_signatory"))[0]
-    if contact:
-        kv(pdf, "Attention:", contact)
-    if Q("q_rep"):
-        kv(pdf, "Your contact:", " | ".join(x for x in (Q("q_rep"), CO.get("email"), CO.get("phone"), CO.get("web")) if x))
-    pdf.ln(1)
+    cust = [x for x in ([contact] if contact else []) + [Q("q_company")] + cust_address_lines() if x]
+    pdf.set_font("Helvetica", "B", 7.5); pdf.set_text_color(*ACCENT); pdf.cell(90, 4.5, "PREPARED FOR", ln=True); pdf.set_text_color(0, 0, 0)
+    for n, line in enumerate(cust or ["-"]):
+        pdf.set_font("Helvetica", "B" if (line == Q("q_company")) else "", 9); pdf.cell(90, 4.4, s(line)[:55], ln=True)
+    y_left = pdf.get_y()
+    ours = [x for x in (Q("q_rep"), CO.get("phone"), CO.get("email"), CO.get("web")) if x]
+    pdf.set_xy(right - 70, y1); pdf.set_font("Helvetica", "B", 7.5); pdf.set_text_color(*ACCENT)
+    pdf.cell(70, 4.5, "YOUR CONTACT", align="R")
+    pdf.set_text_color(0, 0, 0)
+    for n, line in enumerate(ours):
+        pdf.set_xy(right - 70, y1 + 4.5 + n * 4.4); pdf.set_font("Helvetica", "B" if n == 0 and Q("q_rep") else "", 9)
+        pdf.cell(70, 4.4, s(line), align="R")
+    pdf.set_y(max(y_left, y1 + 4.5 + len(ours) * 4.4) + 4)
+
+    # ── letter opening ──
+    first = (contact.split() or [""])[0] if contact else ""
+    pdf.set_font("Helvetica", "", 9.5); pdf.cell(0, 5, s(f"Dear {first}," if first else "Dear Sir / Madam,"), ln=True); pdf.ln(1)
     para(pdf, "Thank you for the opportunity to quote. Below is the system we recommend, what it will cost, and what is included. "
               "Everything is supplied, installed and supported by one team.", size=9, h=4.8)
 
-    band(pdf, "Your proposed system")
+    # ── systems only (no extras, materials or labour) ──
+    lh_band("Your proposed system")
     shown = 0
     for it, q in C["qty"]:
-        if it["group"] in ("Materials", "Labour"):
+        if it["group"] not in SYSTEM_GROUPS:
             continue
-        if pdf.get_y() > 250:
-            pdf.add_page(); pdf.set_y(20)
+        need(16)
         y = pdf.get_y()
         img = image_for(it)
         if img:
             try:
                 _raw = _png_bytes(img); _w, _h = _PIm.open(io.BytesIO(_raw)).size
-                _bw, _bh = 30.0, 14.0
+                _bw, _bh = 28.0, 12.0
                 _sc = min(_bw / _w, _bh / _h)
                 pdf.image(io.BytesIO(_raw), x=pdf.l_margin + 1 + (_bw - _w * _sc) / 2, y=y + 1 + (_bh - _h * _sc) / 2, w=_w * _sc, h=_h * _sc)
             except Exception:
@@ -934,17 +1046,18 @@ def build_quote_pdf():
         if _lg:
             try:
                 _lraw = _png_bytes(_lg); _lw, _lh = _PIm.open(io.BytesIO(_lraw)).size
-                _lsc = min(26.0 / _lw, 8.0 / _lh)
-                pdf.image(io.BytesIO(_lraw), x=pdf.l_margin + 118, y=y + 4.5, w=_lw * _lsc, h=_lh * _lsc)
+                _lsc = min(24.0 / _lw, 7.5 / _lh)
+                pdf.image(io.BytesIO(_lraw), x=right - 52, y=y + 3.5, w=_lw * _lsc, h=_lh * _lsc)
             except Exception:
                 pass
-        pdf.set_xy(pdf.l_margin + 34, y + 2)
-        pdf.set_font("Helvetica", "B", 9); pdf.cell(105, 5, s(it["name"])[:62], ln=True)
-        pdf.set_x(pdf.l_margin + 34); pdf.set_font("Helvetica", "", 8); pdf.set_text_color(100, 110, 120)
-        pdf.cell(105, 4.5, s(it.get("desc") or it["group"])[:70], ln=False); pdf.set_text_color(0, 0, 0)
-        pdf.set_xy(pdf.l_margin + 150, y + 4); pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 6, f"x {q}", align="R")
-        pdf.set_y(y + 17); pdf.set_draw_color(215, 225, 235); pdf.line(pdf.l_margin, pdf.get_y(), 195, pdf.get_y()); pdf.set_draw_color(0, 0, 0)
+        pdf.set_xy(pdf.l_margin + 32, y + 2)
+        pdf.set_font("Helvetica", "B", 9); pdf.cell(90, 5, s(it["name"])[:52], ln=True)
+        pdf.set_x(pdf.l_margin + 32); pdf.set_font("Helvetica", "", 8); pdf.set_text_color(100, 110, 120)
+        pdf.cell(90, 4.5, s(it.get("desc") or it["group"])[:60], ln=False); pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(right - 22, y + 3.5); pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(22, 6, f"x {q}", align="R")
+        pdf.set_y(y + 14.5); pdf.set_draw_color(215, 225, 235); pdf.line(pdf.l_margin, pdf.get_y(), right, pdf.get_y()); pdf.set_draw_color(0, 0, 0)
+        pdf.ln(0.8)
         shown += 1
     if not shown:
         para(pdf, "(equipment to be confirmed)", style="I")
@@ -953,24 +1066,8 @@ def build_quote_pdf():
         pdf.ln(1)
         para(pdf, "Blue Science: UV-C air sanitising built into the unit - helps remove airborne viruses, bacteria, moulds and odours.", size=8, style="I")
 
-    band(pdf, "Your price")
+    # ── price ──
     fy = int(COST["free_support_years"])
-    if pdf.get_y() > 215:
-        pdf.add_page(); pdf.set_y(20)
-    y = pdf.get_y()
-    pdf.set_fill_color(*PALE); bh = 30 if C["is_cash"] else 23
-    pdf.rect(pdf.l_margin, y, pdf.epw, bh, "F")
-    pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, y, 2.2, bh, "F")
-    pdf.set_xy(pdf.l_margin + 8, y + 3); pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*NAVY)
-    if C["is_cash"]:
-        pdf.cell(0, 5, "ONE-OFF PRICE", ln=True)
-        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 24); pdf.cell(0, 12, money(C["cash_price"]), ln=True)
-        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "", 9); pdf.set_text_color(70, 80, 90)
-        pdf.cell(0, 5, "plus VAT - supplied, installed and commissioned", ln=True)
-    else:
-        pdf.cell(0, 5, "MONTHLY RENTAL", ln=True)
-        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 24); pdf.cell(0, 12, money(C["rental"]) + " per month", ln=True)
-    pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
     inc = [f"Supply and installation by qualified F-Gas engineers, including all materials",
            *([f"Estimated {C['est_days']} day{'s' if C['est_days'] != 1 else ''} install" + (f" with {C['engineers']} engineers" if C.get("engineers", 1) > 1 else "")] if C["est_days"] > 0 else []),
            f"{fy} year{'s' if fy != 1 else ''} on-site support and warranty included",
@@ -979,6 +1076,22 @@ def build_quote_pdf():
         inc.append(f"Cashback of {money(_num('q_cashback'))} towards your requirements")
     if not C["is_cash"]:
         inc.append(f"plus VAT - over {C['term']} months, subject to finance approval")
+    bh = 28 if C["is_cash"] else 22
+    lh_band("Your price")
+    need(bh + 8 + 5 * len(inc))                       # keep the price box and what's included together
+    y = pdf.get_y()
+    pdf.set_fill_color(*PALE); pdf.rect(pdf.l_margin, y, pdf.epw, bh, "F")
+    pdf.set_fill_color(*ACCENT); pdf.rect(pdf.l_margin, y, 2.2, bh, "F")
+    pdf.set_xy(pdf.l_margin + 8, y + 3); pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(*BLUE)
+    if C["is_cash"]:
+        pdf.cell(0, 5, "ONE-OFF PRICE", ln=True)
+        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 22); pdf.cell(0, 11, money(C["cash_price"]), ln=True)
+        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "", 9); pdf.set_text_color(70, 80, 90)
+        pdf.cell(0, 5, "plus VAT - supplied, installed and commissioned", ln=True)
+    else:
+        pdf.cell(0, 5, "MONTHLY RENTAL", ln=True)
+        pdf.set_x(pdf.l_margin + 8); pdf.set_font("Helvetica", "B", 22); pdf.cell(0, 11, money(C["rental"]) + " per month", ln=True)
+    pdf.set_text_color(0, 0, 0); pdf.set_y(y + bh + 3)
     pdf.set_font("Helvetica", "B", 9); pdf.cell(0, 5, "Included", ln=True)
     for t in inc:
         pdf.set_font("Helvetica", "", 8.5); pdf.set_x(pdf.l_margin + 3); pdf.cell(0, 5, s("-  " + t), ln=True)
@@ -986,18 +1099,26 @@ def build_quote_pdf():
     if ex_total > 0 and not C["is_cash"]:
         diff = ex_total - C["rental"]
         pdf.ln(2); pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 5, s(f"Compared with your current monthly air conditioning costs of {money(ex_total)}: "
-                         + (f"an estimated saving of {money(diff)} a month." if diff >= 0 else f"{money(-diff)} a month more, for new equipment and cover.")), ln=True)
+        pdf.multi_cell(pdf.epw, 5, s(f"Compared with your current monthly air conditioning costs of {money(ex_total)}: "
+                         + (f"an estimated saving of {money(diff)} a month." if diff >= 0 else f"{money(-diff)} a month more, for new equipment and cover.")))
 
-    band(pdf, "What happens next")
+    # ── next steps + sign-off ──
+    lh_band("What happens next")
     steps = ["We confirm the details with you and arrange a site visit if needed.",
              "You accept the quotation" + ("" if C["is_cash"] else "; we help with the finance application") + ".",
              "We install and commission the system at a time to suit you.",
              "Your on-site support starts from installation."]
     for n, t in enumerate(steps, 1):
+        need(6)
         pdf.set_font("Helvetica", "B", 9); pdf.set_x(pdf.l_margin + 2); pdf.cell(7, 5.5, f"{n}.")
         pdf.set_font("Helvetica", "", 9); pdf.cell(0, 5.5, s(t), ln=True)
-    pdf.ln(2)
+    pdf.ln(3)
+    need(24)
+    pdf.set_font("Helvetica", "", 9.5); pdf.cell(0, 5, "Kind regards,", ln=True); pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 9.5); pdf.cell(0, 5, s(Q("q_rep") or CO["trading"]), ln=True)
+    if Q("q_rep"):
+        pdf.set_font("Helvetica", "", 9); pdf.set_text_color(90, 100, 110); pdf.cell(0, 4.6, s(CO["trading"]), ln=True); pdf.set_text_color(0, 0, 0)
+    pdf.ln(3)
     para(pdf, f"All prices exclude VAT. This quotation is valid for {valid_days} days and is subject to site survey, "
               + ("" if C["is_cash"] else "finance approval, ") + "and our terms and "
               "conditions, which we will send with your order documents.", size=7.5, style="I")
@@ -1162,12 +1283,13 @@ def build_shire(C, sign=None):
 st.markdown("""
 <style>
 .block-container{padding-top:3.4rem;max-width:1250px}
-.st-hero{background:linear-gradient(120deg,#10294A 0%,#0F5C8C 100%);color:#fff;border-radius:16px;padding:1.1rem 1.4rem;margin-bottom:1rem;border-bottom:3px solid #FF8A2A}
+.st-hero{background:linear-gradient(120deg,#002869 0%,#0443AE 100%);color:#fff;border-radius:16px;padding:1.1rem 1.4rem;margin-bottom:1rem;border-bottom:3px solid #FF650D}
+.st-hero .lg{background:#fff;border-radius:12px;padding:9px 14px;line-height:0}
 .st-hero .t{font-size:1.5rem;font-weight:800;letter-spacing:.3px}.st-hero .s{color:#BFE6FA;font-size:.9rem}
-.st-card{border:1px solid #223652;border-left:4px solid #FF8A2A;border-radius:14px;padding:1rem 1.2rem;background:#121D30}
+.st-card{border:1px solid #223652;border-left:4px solid #FF650D;border-radius:14px;padding:1rem 1.2rem;background:#121D30}
 .st-card .l{font-size:.72rem;font-weight:700;text-transform:uppercase;color:#7FC8EE;letter-spacing:.4px}
 .st-card .v{font-size:1.9rem;font-weight:800;color:#FFFFFF}.st-card .x{font-size:.82rem;color:#8FA9BF}
-.st-warn{border-left:4px solid #FF8A2A;background:rgba(255,138,42,.12);border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#FFD9B3}
+.st-warn{border-left:4px solid #FF650D;background:rgba(255,101,13,.12);border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#FFD9B3}
 .st-bad{border-left:4px solid #F25C5C;background:rgba(242,92,92,.14);border-radius:8px;padding:.6rem .9rem;margin:.4rem 0;color:#FFC9C9}
 h4,h5{color:#7FC8EE !important}
 </style>""", unsafe_allow_html=True)
@@ -1177,9 +1299,15 @@ def card(label, value, sub="", target=None):
                             f"<div class='x'>{esc(sub)}</div></div>", unsafe_allow_html=True)
 
 me = st.session_state.current_user or {}
-st.markdown(f"<div class='st-hero'><div class='t'>❄️ {esc(CO['trading'])}</div>"
-            f"<div class='s'>Quotes &amp; paperwork" + (f" · signed in as {esc(me.get('name') or me.get('email'))}" if me else "") + "</div></div>",
-            unsafe_allow_html=True)
+_hero_logo = logo_html(46)
+_hero_txt = (f"<div class='s'>Quotes &amp; paperwork" + (f" · signed in as {esc(me.get('name') or me.get('email'))}" if me else "") + "</div>")
+if _hero_logo:
+    st.markdown(f"<div class='st-hero' style='display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap'><div class='lg'>{_hero_logo}</div>"
+                f"<div><div class='t'>Quotes &amp; Paperwork</div><div class='s'>Supply · Installation · Service · Maintenance"
+                + (f" &nbsp;|&nbsp; signed in as {esc(me.get('name') or me.get('email'))}" if me else "") + "</div></div></div>",
+                unsafe_allow_html=True)
+else:
+    st.markdown(f"<div class='st-hero'><div class='t'>❄️ {esc(CO['trading'])}</div>{_hero_txt}</div>", unsafe_allow_html=True)
 
 # ───────────────────────────── sidebar: summary + customer details (as in the telephony quotation tool) ─────────────────────────────
 def _rental_block(target=None):
@@ -1490,7 +1618,7 @@ with t_quote:
         st.info("Customer details, bank details and the customer's current costs are filled in on the left.")
     st.divider()
     st.markdown("##### Customer quote")
-    st.caption("A clear one-page quotation (equipment, price and term) you can email before visiting. It is not a contract and shows no costs or margins.")
+    st.caption("A clear quotation on the SteadyTemp letterhead (systems, price and term) you can email before visiting. Extras, materials and labour are left off. It is not a contract and shows no costs or margins.")
     qb1, qb2 = st.columns([1, 1])
     if qb1.button("📧 Customer quote", type="primary", key="btn_cust_quote"):
         try:
@@ -1895,20 +2023,21 @@ if IS_ADMIN and t_admin is not None:
             with st.form("adm_co_form"):
                 c1, c2 = st.columns(2)
                 trading = c1.text_input("Trading name", CO["trading"]); legal = c2.text_input("Legal company name", CO["legal"])
-                legal_line = st.text_input("Footer line", CO["legal_line"])
+                legal_line = st.text_input("Extra footer line (optional - leave blank for none)", CO.get("legal_line", ""))
                 addr = st.text_area("Address (one line each)", "\n".join(CO["addr"]), height=110)
                 r1, r2 = st.columns(2)
                 reg = r1.text_input("Registration line", CO["reg"]); vat = r2.text_input("VAT line", CO["vat"])
+                reg_office = st.text_input("Registered office (printed in the footer)", CO.get("reg_office", ""))
                 e1, e2, e3 = st.columns(3)
                 email = e1.text_input("Email (fixed)", CO["email"], disabled=True); phone = e2.text_input("Phone (fixed)", CO["phone"], disabled=True); web = e3.text_input("Website (fixed)", CO["web"], disabled=True)
                 funder = st.text_input("Finance provider name used in the paperwork", CO["funder"])
-                logo = st.file_uploader("Logo (PNG/JPG, optional)", type=["png", "jpg", "jpeg"])
+                logo = st.file_uploader("Logo (PNG/JPG, optional - only used if steadytemp_logo.png isn't in the repo)", type=["png", "jpg", "jpeg"])
                 st.markdown("**Terms & Conditions** - one clause per row. `{legal}`, `{trading}` and `{free}` fill in automatically.")
                 terms_df = st.data_editor(pd.DataFrame(CFG["terms"], columns=["Clause", "Text"]), num_rows="dynamic", **FW,
                                           column_config={"Text": st.column_config.TextColumn("Text", width="large")})
                 if st.form_submit_button("Save company & terms", type="primary"):
                     CO.update(trading=trading, legal=legal, legal_line=legal_line, addr=[x.strip() for x in addr.splitlines() if x.strip()],
-                              reg=reg, vat=vat, email=email, phone=phone, web=web, funder=funder)
+                              reg=reg, reg_office=reg_office.strip(), vat=vat, email=email, phone=phone, web=web, funder=funder)
                     if logo is not None:
                         import base64
                         CO["logo_b64"] = base64.b64encode(logo.getvalue()).decode()
