@@ -281,6 +281,8 @@ if "sy comms" in (str(CO.get("legal", "")) + str(CO.get("legal_line", ""))).lowe
     CO.update(legal=_d["legal"], legal_line="", reg=_d["reg"], reg_office=_d["reg_office"])
 CO.setdefault("reg_office", default_config()["company"]["reg_office"])
 COST = CFG["costs"]
+for _k, _v in default_config()["costs"].items():
+    COST.setdefault(_k, _v)                     # any setting missing from a saved config takes its standard value
 
 # ───────────────────────────── sign-in ─────────────────────────────
 for _k, _v in (("authed", False), ("current_user", None)):
@@ -372,6 +374,16 @@ IS_ADMIN = (ROLE == "admin") if USERS else True      # without individual logins
 # ───────────────────────────── calculation engine ─────────────────────────────
 GROUP_ORDER = ["Wall Mounted", "Ceiling Cassette", "Ducted", "Lossnay Air Exchange", "Extras", "Materials", "Labour"]
 SYSTEM_KINDS = ("wall", "ceiling", "ducted", "lossnay")
+GROUP_KIND = {"Wall Mounted": "wall", "Ceiling Cassette": "ceiling", "Ducted": "ducted", "Lossnay Air Exchange": "lossnay"}
+MAINT_STANDARD = {"wall": 10.0, "ceiling": 15.0, "ducted": 25.0, "lossnay": 25.0}     # £/month per unit - used if a saved rate is missing or £0
+
+def maint_rate(kind):
+    """Maintenance £/month for a unit type: the Admin rate, or the standard rate if it is missing or £0."""
+    try:
+        v = float(COST.get("maint_" + kind) or 0)
+    except Exception:
+        v = 0.0
+    return v if v > 0 else MAINT_STANDARD.get(kind, 0.0)
 
 def _num(key, default=0.0):
     try:
@@ -464,11 +476,13 @@ def calc():
         qty.append((it, q))
         equip_cost += q * float(it["cost"])
         equip_srrp += q * srrp_of(it)
-        if it["kind"] in counts:
-            counts[it["kind"]] += q
+        _k = it.get("kind")
+        if _k not in counts:
+            _k = GROUP_KIND.get(it.get("group"), _k)          # a unit saved with the wrong type is still counted by its group
+        if _k in counts:
+            counts[_k] += q
     n_sys = counts["wall"] + counts["ceiling"] + counts["ducted"]
-    maint_annual = 12.0 * (counts["wall"] * C["maint_wall"] + counts["ceiling"] * C["maint_ceiling"]
-                           + counts["ducted"] * C["maint_ducted"] + counts["lossnay"] * C["maint_lossnay"])
+    maint_annual = 12.0 * sum(counts[k] * maint_rate(k) for k in SYSTEM_KINDS)      # annual support, always from the maintenance rates
     cherry = C["cherry_picker"] if st.session_state.get("q_cherry") == "Yes" else 0.0
     pump = int(_num("q_pumps")) * C["pump"]
     extras = cherry + pump
@@ -1390,6 +1404,10 @@ with st.sidebar:
     st.markdown(f"<div style='display:flex;justify-content:space-between;align-items:baseline;margin-top:.2rem'>"
                 f"<span style='font-size:.76rem;color:#9FB6CA'>Annual support (after year 1)</span>"
                 f"<span style='font-size:.95rem;font-weight:600'>{'-' if CALC['n_all'] == 0 else esc(money(CALC['support']))}</span></div>", unsafe_allow_html=True)
+    _std = [lbl for k, lbl in (("wall", "wall"), ("ceiling", "cassette"), ("ducted", "ducted"), ("lossnay", "Lossnay"))
+            if CALC["counts"].get(k, 0) > 0 and float(COST.get("maint_" + k, 0) or 0) <= 0]
+    if _std and IS_ADMIN:
+        st.caption(f"ℹ️ Annual support uses the standard maintenance rate for {', '.join(_std)} units - the Admin rate is £0.")
 
     st.markdown("---")
     st.markdown("### 🎯 Target rental")
@@ -2073,7 +2091,7 @@ if IS_ADMIN and t_admin is not None:
             with st.form("adm_costs_form"):
                 cols = st.columns(3); vals = {}
                 for n, (k, lbl) in enumerate(labels.items()):
-                    vals[k] = cols[n % 3].number_input(lbl, value=float(COST[k]), step=1.0 if k not in ("cash_load", "srrp_mult", "travel_hours") else 0.05 if k != "travel_hours" else 0.25, key=f"adm_c_{k}")
+                    vals[k] = cols[n % 3].number_input(lbl, value=float(maint_rate(k[6:]) if k.startswith("maint_") else COST[k]), step=1.0 if k not in ("cash_load", "srrp_mult", "travel_hours") else 0.05 if k != "travel_hours" else 0.25, key=f"adm_c_{k}")
                 if st.form_submit_button("Save costs & fees", type="primary"):
                     for k, v in vals.items():
                         COST[k] = int(v) if k == "free_support_years" else float(v)
