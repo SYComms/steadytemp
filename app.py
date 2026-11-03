@@ -786,8 +786,17 @@ def doc_proposal(pdf, C, sign):
     pdf.ln(1)
     band(pdf, "Your quotation includes")
     cash_back = _num("q_cashback")
-    yes = [("Installation & set up", "Yes"), (f"{fy} year on-site support", "Yes"),
-           ("Cherry picker / access equipment", Q("q_cherry") or "No")]
+    _eng, _elec = install_summary(C)
+    yes = [("Installation & set up", "Yes")]
+    if C["est_days"] > 0:
+        yes.append(("Engineer installation", f"{C['est_days']} day{'s' if C['est_days'] != 1 else ''}"
+                    + (f" x {C['engineers']} engineers" if C.get("engineers", 1) > 1 else "")))
+    if _elec:
+        yes.append(("Electrician", _elec.split(" - ")[1] if " - " in _elec else "Included"))
+    _wy = warranty_years(C)
+    yes += [("Warranty", f"{_wy} year{'s' if _wy != 1 else ''}" + ("" if C["is_cash"] else " (full term)")),
+            (f"{fy} year on-site support", "Yes"),
+            ("Cherry picker / access equipment", Q("q_cherry") or "No")]
     if int(_num("q_pumps")):
         yes.append(("Condensate pump(s)", str(int(_num("q_pumps")))))
     if cash_back > 0:
@@ -832,7 +841,8 @@ def doc_support(pdf, C, sign):
               f"equipment listed above for an agreement term of {C['term']} months. Faulty equipment will be repaired or replaced. "
               "Additional equipment added later will be charged for, and its warranty premium added to this agreement.")
     pdf.ln(1)
-    kv(pdf, "Inclusive period:", f"{fy} year{'s' if fy != 1 else ''} from installation", 42)
+    kv(pdf, "Warranty:", f"{warranty_years(C)} year{'s' if warranty_years(C) != 1 else ''} from installation" + ("" if C["is_cash"] else " - the full term of the agreement"), 42)
+    kv(pdf, "Inclusive period:", f"{fy} year{'s' if fy != 1 else ''} on-site support from installation", 42)
     kv(pdf, "Annual charge after:", f"{money(C['support'])} plus VAT per year, for the remainder of the term", 42)
     pdf.ln(1)
     para(pdf, f"{CO['trading']} agrees to provide remote and on-site maintenance cover for the equipment above, and the customer agrees to pay "
@@ -931,6 +941,33 @@ def _png_bytes(b64):
     im = _PIm.open(io.BytesIO(base64.b64decode(b64)))
     im = im.convert("RGBA"); bg = _PIm.new("RGBA", im.size, (255, 255, 255, 255)); bg.alpha_composite(im)
     out = io.BytesIO(); bg.convert("RGB").save(out, format="PNG"); return out.getvalue()
+
+def warranty_years(C):
+    """Warranty runs for the whole deal: the lease term in years (3, 5, 7, 10...). Cash sales keep the included support period."""
+    if C["is_cash"]:
+        return int(COST["free_support_years"])
+    return max(1, round(int(C["term"]) / 12))
+
+def warranty_text(C):
+    y = warranty_years(C)
+    return f"{y}-year warranty" + ("" if C["is_cash"] else " - for the full term of the agreement")
+
+def install_summary(C):
+    """(engineer line, electrician line) for the customer paperwork - either can be '' if not in the deal."""
+    eng = ""
+    if C["est_days"] > 0:
+        eng = (f"Engineer installation - estimated {C['est_days']} day{'s' if C['est_days'] != 1 else ''}"
+               + (f" with {C['engineers']} engineers" if C.get("engineers", 1) > 1 else ""))
+    elec = ""
+    if C.get("auto_install"):
+        if C.get("install_elec", 0) > 0:
+            n = C.get("n_units", 0)
+            elec = f"Qualified electrician to connect and wire in your system{'s' if n != 1 else ''}"
+    else:
+        d = sum(q for it, q in C["qty"] if it["group"] == "Labour" and "electrician" in it["name"].lower())
+        if d > 0:
+            elec = f"Qualified electrician - {d} day{'s' if d != 1 else ''}"
+    return eng, elec
 
 def quote_ref():
     import zlib
@@ -1072,9 +1109,12 @@ def build_quote_pdf():
 
     # ── price ──
     fy = int(COST["free_support_years"])
+    _eng, _elec = install_summary(C)
     inc = [f"Supply and installation by qualified F-Gas engineers, including all materials",
-           *([f"Estimated {C['est_days']} day{'s' if C['est_days'] != 1 else ''} install" + (f" with {C['engineers']} engineers" if C.get("engineers", 1) > 1 else "")] if C["est_days"] > 0 else []),
-           f"{fy} year{'s' if fy != 1 else ''} on-site support and warranty included",
+           *([_eng] if _eng else []),
+           *([_elec] if _elec else []),
+           warranty_text(C),
+           f"{fy} year{'s' if fy != 1 else ''} on-site support included",
            f"Then on-site support at {money(C['support'])} per year plus VAT for the rest of the agreement"]
     if _num("q_cashback") > 0:
         inc.append(f"Cashback of {money(_num('q_cashback'))} towards your requirements")
@@ -1634,9 +1674,12 @@ with t_quote:
     st.markdown("##### Customer quote")
     st.caption("A clear quotation on the SteadyTemp letterhead (systems, price and term) you can email before visiting. Extras, materials and labour are left off. It is not a contract and shows no costs or margins.")
     qb1, qb2 = st.columns([1, 1])
-    if qb1.button("📧 Customer quote", type="primary", key="btn_cust_quote"):
-        try:
+    _qsig = json.dumps(quote_snapshot(), sort_keys=True, default=str)
+    _stale = st.session_state.get("_quote_pdf") and st.session_state.get("_quote_sig") != _qsig
+    if qb1.button("📧 Customer quote", type="primary", key="btn_cust_quote") or _stale:
+        try:                                                      # also rebuilt automatically if the customer details or kit change after it was made
             st.session_state["_quote_pdf"] = build_quote_pdf()
+            st.session_state["_quote_sig"] = _qsig
         except Exception as e:
             st.session_state.pop("_quote_pdf", None)
             st.error(f"Couldn't build the quote: {e}")
@@ -1646,7 +1689,7 @@ with t_quote:
         import urllib.parse as _up
         _to = Q("q_email")
         _sub = f"Your air conditioning quotation - {CO['trading']}"
-        _body = (f"Dear {split_name_pos(Q('q_signatory'))[0] or Q('q_contact') or 'customer'},\n\nThank you for the opportunity to quote. "
+        _body = (f"Dear {(Q('q_contact') or split_name_pos(Q('q_signatory'))[0] or 'customer').split()[0]},\n\nThank you for the opportunity to quote. "
                  f"Please find our quotation attached for {Q('q_company') or 'your premises'}.\n\nKind regards,\n{Q('q_rep')}\n{CO['trading']}")
         st.link_button("✉️ Open an email (attach the PDF)", f"mailto:{_to}?subject={_up.quote(_sub)}&body={_up.quote(_body)}")
         st.caption("Your email app opens with the message ready - attach the downloaded PDF before sending.")
@@ -1776,9 +1819,12 @@ with t_cv:
                         f"<div style='font-size:2.3rem;font-weight:800'>{_val}</div>"
                         f"<div style='color:#7F95AA;font-size:.8rem'>plus VAT" + ("" if CALC["is_cash"] else f" · {esc(CALC['profile'])} · {esc(CALC['term_label'])}") + "</div></div>", unsafe_allow_html=True)
             st.markdown("##### ✅ What's included")
+            _eng, _elec = install_summary(CALC)
             for t in ["Supply and installation by qualified F-Gas engineers, including all materials",
+                      *([_eng] if _eng else []), *([_elec] if _elec else []),
+                      warranty_text(CALC),
                       f"{int(COST['free_support_years'])} year on-site support",
-                      "Manufacturer warranty", "Full commissioning and set-up"]:
+                      "Full commissioning and set-up"]:
                 st.markdown(f"<div style='font-size:.88rem;padding:.2rem 0'>✅ {esc(t)}</div>", unsafe_allow_html=True)
             if int(CALC["extra_days"] or 0) == 0 and False:
                 pass
