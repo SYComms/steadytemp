@@ -1,0 +1,65 @@
+name: Keep Streamlit app awake
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"   # every 4 hours (UTC)
+  workflow_dispatch:          # lets you run it manually from the Actions tab
+
+permissions:
+  actions: write              # needed by the keepalive step at the bottom
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright (headless browser)
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Visit the app and wake it if it is asleep
+        env:
+          APP_URL: https://steadytemp-pricebook.streamlit.app/
+        run: |
+          python - <<'EOF'
+          import os
+          from playwright.sync_api import sync_playwright
+
+          url = os.environ["APP_URL"]
+          wake_text = "Yes, get this app back up"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              page.goto(url, wait_until="domcontentloaded", timeout=90000)
+              page.wait_for_timeout(10000)
+
+              clicked = False
+              for frame in page.frames:
+                  btn = frame.get_by_text(wake_text)
+                  if btn.count() > 0:
+                      print("App was asleep - clicking the wake-up button")
+                      btn.first.click()
+                      clicked = True
+                      break
+
+              if clicked:
+                  page.wait_for_timeout(90000)   # give it time to boot
+              else:
+                  print("App is already awake")
+
+              page.wait_for_timeout(20000)       # stay on the page so it counts as a visit
+              print("Page title:", page.title())
+              browser.close()
+          EOF
+
+      # GitHub pauses scheduled workflows after 60 days with no repo activity.
+      # This step stops that from happening (no commits made).
+      - uses: liskin/gh-workflow-keepalive@v1
